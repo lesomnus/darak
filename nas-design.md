@@ -223,16 +223,20 @@
 
 **그 일치를 보장하는 것이 [usersync](#adr-8-계정-생명주기는-usersync에-위임)다.** `roster.yaml`이 번호의 정본이므로 게이트웨이마다 같은 roster로 `apply`하면 uid가 일치한다. 온프렘 AD 도입 후에는 NSS가 그 역할을 넘겨받고, usersync는 `mode: audit`으로 **번호가 여전히 일치하는지 감시하는** 쪽으로 물러난다.
 
-필요 시 MDS caps로 경로를 제한할 수 있다:
+필요 시 MDS caps로 경로를 제한할 수 있다. **경로는 CephFS 네임스페이스 안의 경로**이지 호스트 마운트 지점이 아니다 — `/srv/data`는 우리가 붙이는 자리이므로 여기 쓰면 존재하지 않는 서브트리를 허용하게 된다:
 ```
-ceph fs authorize cephfs client.gw /srv/data rw
+ceph fs authorize cephfs client.gw / rw          # 파일시스템 루트 전체
+# 또는 CephFS 안에 /data 서브트리를 두고 그것만:
+ceph fs authorize cephfs client.gw /data rw
 ```
 
 **단, uid를 고정하는 caps는 이 게이트웨이에 쓸 수 없다.**
 ```
 caps mds = "allow rw path=/home uid=1000 gids=1000,1001"   # ← 게이트웨이에는 부적합
 ```
-이 형태는 **클라이언트의 모든 연산을 그 uid로 squash**한다. 게이트웨이는 정의상 여러 uid를 번갈아 사칭해야 하므로(그게 [ADR-3](#adr-3-임퍼소네이션은-헬퍼-프로세스--fd-패싱)의 전부다) 이 caps를 걸면 임퍼소네이션이 통째로 무력화된다. 게이트웨이에는 **경로 제한만** 걸고 uid 제한은 걸지 않는다.
+이 형태는 **매칭 필터**다 — 클라이언트가 보낸 `caller_uid`/`caller_gid`가 cap에 적힌 값과 다르면 어떤 grant도 매칭되지 않아 MDS가 권한 오류를 돌려준다. 소유자를 1000번으로 바꿔 쓰는(rewrite/squash) 것이 아니라 **그 외의 uid로 하는 연산을 전부 거부**하는 것이다.
+
+결과적으로 게이트웨이에는 쓸 수 없다는 결론은 같다. 게이트웨이는 정의상 여러 uid를 번갈아 사칭해야 하므로(그게 [ADR-3](#adr-3-임퍼소네이션은-헬퍼-프로세스--fd-패싱)의 전부다), 이 caps를 걸면 지정한 한 사람 외의 모든 요청이 실패한다. 게이트웨이에는 **경로 제한만** 걸고 uid 제한은 걸지 않는다.
 
 **`root_squash`도 현 구조와 충돌한다.** Go 서버가 root로 돌면서 팀 디렉터리 프로비저닝(`chown`/`chgrp`)을 하는 한 그 작업이 막힌다. 다만 [ADR-3의 spawner 분리](#서버가-root일-필요가-있는가)를 채택해 서버를 비특권화하면 오히려 켤 수 있게 된다 — 파일 I/O는 전부 비-root 헬퍼가 하기 때문이다. 두 결정은 연동되어 있다.
 
@@ -284,7 +288,9 @@ find /srv/data/teams/design -type d -exec chmod g+s {} +   # setgid는 디렉터
 
 **setgid 비트가 핵심이다.** 이게 없으면 하위에 생성되는 파일이 생성자의 기본 그룹을 따라가 팀원이 수정할 수 없게 된다.
 
-> **`chmod -R g+ws`를 쓰지 말 것.** `-R`은 일반 파일에도 setgid를 붙이는데, group-execute 없이 setgid만 붙은 일반 파일은 Linux에서 mandatory locking 마커로 해석되고 보안 스캐너가 반드시 걸고 넘어진다. 의도한 것은 디렉터리의 setgid이므로 위처럼 분리한다. (`g+rwX`의 대문자 `X`는 이미 실행 비트가 있는 것과 디렉터리에만 `x`를 준다.)
+> **`chmod -R g+ws`를 쓰지 말 것.** `-R`은 일반 파일에도 setgid를 붙인다(`X`와 달리 `s`에는 디렉터리 전용 예외가 없다). 의도한 것은 디렉터리의 setgid이므로 위처럼 분리한다. (`g+rwX`의 대문자 `X`는 이미 실행 비트가 있는 것과 디렉터리에만 `x`를 준다.)
+>
+> 일반 파일의 setgid는 **아무 효과도 없다** — 예전에 mandatory locking 마커로 쓰이긴 했으나 그 기능은 Linux 5.15에서 제거됐고, 그전에도 `-o mand` 마운트가 필요했으며 XFS 기본 마운트나 CephFS는 지원한 적이 없다. 문제는 위험해서가 아니라 **의미 없는 비트가 남아 보안 스캐너가 매번 걸고 넘어지고, 읽는 사람이 의도를 오해한다**는 것이다.
 
 ### Samba 공유 설정
 
@@ -297,29 +303,29 @@ find /srv/data/teams/design -type d -exec chmod g+s {} +   # setgid는 디렉터
    read only = no
    valid users = %S
    create mask = 0600
-   force create mode = 0600
    directory mask = 0700
-   force directory mode = 0700
 
 [team-design]
    path = /srv/data/teams/design
    valid users = @team-design
    force group = team-design
    create mask = 0660
-   force create mode = 0660
    directory mask = 2770
    force directory mode = 2770
 ```
 
-**mask는 반드시 `create mask`와 `force create mode`를 같은 값으로 짝지어야 한다.** Samba의 mode 산술은 `(요청 & mask) | force`이고, **SMB에는 유닉스 mode가 흐르지 않으므로** "요청"은 서버가 DOS 속성에서 유도한 값(윈도우 기준 파일 `0644`, 디렉터리 `0755`)이다. 한쪽만 쓰면 양방향으로 틀린다:
+**mode 산술을 정확히 알고 써야 한다.** Samba는 `(base & mask) | force`로 새 객체의 mode를 정하는데, **SMB에는 유닉스 mode가 흐르지 않으므로** `base`는 클라이언트 요청이 아니라 **smbd가 DOS 속성에서 유도한 값**이다 — 파일 `0666`(archive 속성이 owner-execute로 매핑되면 `0766`), 디렉터리 `0777`.
 
-| 설정 | 결과 | 증상 |
-|---|---|---|
-| mask만 (`0660`) | `0644 & 0660 = 0640` | **팀원이 읽기만 되고 쓰지 못함.** 클라이언트엔 단서가 전혀 없다 |
-| mask가 force보다 넓음 (`0664` + `0660`) | `(0644 & 0664) \| 0660 = 0664` | **world-readable**이 조용히 남는다 |
-| 둘을 같은 값으로 | 정확히 그 값 | 의도대로 |
+| 설정 | 파일 | 폴더 | 판단 |
+|---|---|---|---|
+| 없음(전역 기본 `0744`/`0755`) | `0744` | `2755` | group·other 비트가 남는다 |
+| `create mask = 0660` / `directory mask = 2770` | `0660` | `2770` | **이것만으로 충분하다** |
+| + `force create mode = 0660` | `0660` | — | **차이 없음.** 넣지 않는다 |
+| mask가 force보다 넓음 (`0664` + `0660`) | `0664` | — | **world-readable**이 조용히 남는다 |
 
-setgid 비트는 부모에서 커널이 전파하지만 **그룹 쓰기 비트는 전파되지 않는다** — 그건 force 해야 한다.
+**`force directory mode = 2770`만은 실제로 필요하다.** mask는 비트를 **지우기만** 하므로 setgid를 되돌릴 수 없다. 부모 디렉터리가 setgid를 잃으면(드리프트) 그 아래 SMB로 만든 폴더가 `0770`·setgid 없음으로 떨어지고, **그 안에 생성되는 파일이 생성자의 기본 그룹을 따라가** 팀원이 수정하지 못한다 — 한 단계 아래에서 벌어지고 클라이언트에는 단서가 없다. force가 어느 깊이에서든 setgid를 복원한다.
+
+> 위 숫자는 추론이 아니라 **실제 smbd로 측정한 값**이다. usersync 저장소의 `scripts/verify-samba-modes.sh`가 재현한다(부모 `2770`: mask만으로 `0660`/`2770` — force 무의미. 부모 `0770`: mask만 `0770`, force 있으면 `2770`).
 
 **`[homes]`의 `path`도 필수다.** Samba의 `[homes]`는 `path`가 없으면 `getpwnam()`의 홈 디렉터리를 쓴다. 계정 프로비저닝이 passwd의 홈을 `/srv/data/homes/<user>`로 잡아준다면 생략해도 맞지만, 그 일치에 암묵적으로 기대는 대신 명시한다.
 
