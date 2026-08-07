@@ -1,0 +1,8 @@
+# build output
+/dist/
+/darak
+/darak-helper
+
+# local state
+*.tar.gz
+.env

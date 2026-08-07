@@ -1,0 +1,22 @@
+{
+	"name": "lesomnus/darak",
+	"dockerComposeFile": "docker-compose.yaml",
+	"service": "dev",
+	// `docker` is the engine `dev` talks to; it is named here so that it is
+	// started along with it and not only when something asks for it.
+	"runServices": [
+		"dev",
+		"docker"
+	],
+	"workspaceFolder": "/workspace",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go",
+				"bufbuild.vscode-buf",
+				"hashicorp.hcl",
+				"streetsidesoftware.code-spell-checker"
+			]
+		}
+	}
+}

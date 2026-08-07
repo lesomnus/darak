@@ -1,0 +1,57 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: sleep infinity
+
+    user: "1000"
+    privileged: true
+    environment:
+      - SHELL=/bin/zsh
+      - DOCKER_HOST=tcp://localhost:2375
+
+    volumes:
+      - command.history:/commandhistory
+      - go.cache.mod:/home/hypnos/go/pkg/mod
+      - go.cache.bin:/home/hypnos/.cache/go-build
+
+      - ..:/workspace
+      - ${HOME}/workspaces:/workspaces
+
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+          pids: 2048
+        reservations:
+          cpus: "2"
+          memory: 4G
+
+  # The engine the dev container talks to, so that `docker compose up -d db`
+  # of the workspace has something to run on.
+  #
+  # It shares the network of the dev container, which is what makes a port a
+  # container publishes reachable at localhost, and it mounts the workspace at
+  # the same path, which is what makes a bind mount of a file in the workspace
+  # resolve to the same file. The engine listens without TLS, but only on that
+  # shared network, which nothing outside the two containers is on.
+  docker:
+    image: docker:28-dind
+
+    privileged: true
+    network_mode: "service:dev"
+
+    environment:
+      - DOCKER_TLS_CERTDIR=
+
+    volumes:
+      - ..:/workspace
+      - docker.data:/var/lib/docker
+
+volumes:
+  command.history:
+  go.cache.mod:
+  go.cache.bin:
+  docker.data:
