@@ -61,18 +61,36 @@ running even on a standalone Samba, because `ntlm_auth` is a winbind client.
 POST   /api/login              {"user":..., "password":...}
 POST   /api/logout
 GET    /api/whoami
+
 GET    /api/files/<path>       directory -> JSON listing; file -> content (Range, ETag)
 PUT    /api/files/<path>       upload
-DELETE /api/files/<path>       move to the trash
-POST   /api/dirs/<path>        mkdir
+DELETE /api/files/<path>       move to the trash — NOT a delete
+POST   /api/dirs/<path>        mkdir, not mkdir -p
 
 POST   /api/shares             {"path":..., "password":..., "ttl_hours":...}
 GET    /api/shares             your own links
 DELETE /api/shares/<token>     revoke
 GET    /s/<token>              the public side; no session — the URL is the credential
+POST   /s/<token>              password=... for a protected link
+
+GET    /api/teams              teams, owners, members
+GET    /api/teams/whoami       which teams you own
+POST   /api/teams/<team>/members   {"user":..., "member":...}
+
+GET    /api/admin/whoami       every signed-in user may ask
+GET    /api/admin/users        admin group only, below here
+GET    /api/admin/disk
+GET    /api/admin/audit
+GET    /api/admin/activity
+POST   /api/admin/users/<user>/smb        {"enabled":...}
+POST   /api/admin/users/<user>/password   {"password":...}
 ```
 
-Anything not matching a route is the browser interface.
+Anything not matching a route is the browser interface — including a request
+that matches a path but not its method, which gets 200 and index.html rather
+than 405. [`docs/http-api.md`](docs/http-api.md) is the spec: exact shapes,
+status codes, and the several places where what the code does is not what the
+method name suggests.
 
 ## The interface
 
