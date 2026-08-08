@@ -57,9 +57,12 @@ var pathCalls = map[string]map[string]bool{
 		// These four touch the filesystem.
 		"Walk": true, "WalkDir": true, "Glob": true, "EvalSymlinks": true,
 	},
-	"io/fs": {
-		"WalkDir": true, "ReadFile": true, "ReadDir": true, "Stat": true, "Glob": true,
-	},
+	// io/fs is deliberately absent. Its functions take an fs.FS, and the only
+	// ways to get one backed by the real filesystem — os.DirFS and os.Root.FS —
+	// are already refused above. Everything else is an embed.FS or a test
+	// fixture, where nothing is resolved at all: the UI reading its own compiled
+	// -in assets is not the thing this rule is about, and flagging it would teach
+	// whoever hits it that the check cries wolf.
 }
 
 // helperOnly are the directories allowed to make those calls.
@@ -75,6 +78,21 @@ var helperOnly = map[string]bool{
 	"internal/lint":        true,
 	"cmd/darak-helper":     true,
 }
+
+// localStateMarker exempts a file that touches server-local state — a state file
+// the operator configured — rather than the tree being served.
+//
+// The rule this check enforces is that the server never resolves a path that
+// came from a REQUEST. A fixed configuration path is not that, and there is no
+// way to route it through a helper anyway: no user owns it. The exemption is a
+// marker in the file rather than a directory in a list so that every instance is
+// visible where it happens and greppable, instead of a package quietly growing
+// new ones.
+const localStateMarker = "//darak:local-state"
+
+// maxExempt bounds how many files may carry the marker. An exemption mechanism
+// with no ceiling becomes the rule it was an exception to.
+const maxExempt = 2
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -103,6 +121,7 @@ func TestServerNeverResolvesAPath(t *testing.T) {
 	root := repoRoot(t)
 	fset := token.NewFileSet()
 	var found []violation
+	var exempt []string
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -131,9 +150,13 @@ func TestServerNeverResolvesAPath(t *testing.T) {
 			return nil
 		}
 
-		f, err := parser.ParseFile(fset, path, nil, 0)
+		f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
 			return err
+		}
+		if hasMarker(f) {
+			exempt = append(exempt, rel)
+			return nil
 		}
 		found = append(found, inspect(fset, f)...)
 		return nil
@@ -146,6 +169,23 @@ func TestServerNeverResolvesAPath(t *testing.T) {
 		t.Errorf("%s: %s resolves a path — the server must go through the helper, "+
 			"or the kernel checks this against root instead of the user", v.pos, v.call)
 	}
+	if len(exempt) > maxExempt {
+		t.Errorf("%d files carry %s (%v); the ceiling is %d. An exemption with no "+
+			"limit becomes the rule it was an exception to", len(exempt), localStateMarker, exempt, maxExempt)
+	}
+	t.Logf("%d file(s) exempt as local state: %v", len(exempt), exempt)
+}
+
+// hasMarker reports whether a file opts out as local-state handling.
+func hasMarker(f *ast.File) bool {
+	for _, g := range f.Comments {
+		for _, c := range g.List {
+			if strings.HasPrefix(c.Text, localStateMarker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // inspect reports path-resolving calls in one file, resolving import aliases so
@@ -247,5 +287,48 @@ func bad(dirfd int, name string) {
 		if got[fine] {
 			t.Errorf("%s was flagged but takes no path", fine)
 		}
+	}
+}
+
+// The rule is about resolving paths on the real filesystem. An embed.FS resolves
+// nothing — its contents are bytes in the binary — so reading from one is not a
+// violation, and flagging it would teach whoever hits it that the check cries
+// wolf. The only ways to get an fs.FS that IS the filesystem are os.DirFS and
+// os.Root.FS, and those are refused directly.
+func TestEmbeddedAssetsAreNotAViolation(t *testing.T) {
+	src := `package ui
+
+import (
+	"embed"
+	"io/fs"
+	"os"
+)
+
+//go:embed static
+var content embed.FS
+
+func serve(name string) {
+	sub, _ := fs.Sub(content, "static")
+	_, _ = fs.Stat(sub, name)      // fine: compiled-in bytes
+	_, _ = fs.ReadFile(sub, name)  // fine
+	_ = os.DirFS("/srv/data")      // NOT fine: this one is the filesystem
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "ui.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, v := range inspect(fset, f) {
+		got[v.call] = true
+	}
+	for _, fine := range []string{"fs.Stat", "fs.ReadFile", "fs.Sub"} {
+		if got[fine] {
+			t.Errorf("%s was flagged, but an embed.FS resolves nothing", fine)
+		}
+	}
+	if !got["os.DirFS"] {
+		t.Error("os.DirFS must still be flagged: it is the door from an fs.FS to the real filesystem")
 	}
 }

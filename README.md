@@ -39,6 +39,8 @@ ordinary at the call site. `internal/lint` fails the build if one appears.
 | `internal/vfs` | the write protocol and the trash |
 | `internal/auth` | passwords, via `ntlm_auth` against Samba's passdb |
 | `internal/server` | HTTP |
+| `internal/share` | capability links |
+| `internal/ui` | the browser interface, embedded |
 | `internal/lint` | the invariant above |
 | `internal/integration` | real users, real modes, real Samba — in a container |
 
@@ -62,7 +64,16 @@ GET    /api/files/<path>       directory -> JSON listing; file -> content (Range
 PUT    /api/files/<path>       upload
 DELETE /api/files/<path>       move to the trash
 POST   /api/dirs/<path>        mkdir
+
+POST   /api/shares             {"path":..., "password":..., "ttl_hours":...}
+GET    /api/shares             your own links
+DELETE /api/shares/<token>     revoke
+GET    /s/<token>              the public side; no session — the URL is the credential
 ```
+
+Anything not matching a route is the browser interface, which is plain HTML, CSS
+and JavaScript embedded in the binary. There is no build step and nothing to
+install on the server.
 
 Paths are relative to the served root and are laid out as
 `homes/<user>/…` and `teams/<team>/…`. That is not cosmetic: it is what decides
@@ -86,7 +97,25 @@ version.
 
 There is no lock manager. Concurrent writers are last-write-wins, which is only
 reasonable because losing work is always undoable: the replaced version is in the
-trash, and so is anything deleted.
+trash, and so is anything deleted. That guarantee covers the web path only —
+SMB writes in place, and the people who mount it are the ones who chose to.
+
+## Share links
+
+A link is a capability: the URL grants a fetch of one file until it expires or is
+revoked, and changes nothing on disk. The server opens the file **as the person
+who made the link**, so the kernel decides on every fetch — losing access to the
+file, or having it deleted, closes the link with no bookkeeping to remember.
+
+Unlike an S3 presigned URL the token is stored rather than signed, so it can be
+revoked before it expires. That is deliberate: everything else here closes
+immediately (a logout ends a session at once; disabling an account shuts both
+paths), and a signature the server could not take back would be the one thing
+that outlived all of it.
+
+Links live outside the data volume, because
+[nas-design.md](./nas-design.md) §7 requires that volume to stay free of
+application state before it becomes a shared filesystem.
 
 ## Tests
 

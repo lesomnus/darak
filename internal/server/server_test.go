@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/lesomnus/darak/internal/auth"
 	"github.com/lesomnus/darak/internal/helper"
 	"github.com/lesomnus/darak/internal/helperpool"
+	"github.com/lesomnus/darak/internal/share"
 	"github.com/lesomnus/darak/internal/vfs"
 	"github.com/lesomnus/darak/internal/wire"
 	"golang.org/x/sys/unix"
@@ -472,5 +474,232 @@ func TestTokensAreUnique(t *testing.T) {
 			t.Fatal("duplicate session token")
 		}
 		seen[tok] = true
+	}
+}
+
+// --- share links ---
+
+func newShareHarness(t *testing.T) (*harness, *share.Store) {
+	t.Helper()
+	h := newHarness(t, fakeAuth{ok: true})
+	st := share.NewStore()
+	s, err := New(Config{FS: &vfs.FS{Pool: h.doer}, Auth: fakeAuth{ok: true}, Shares: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.srv = s.Handler()
+	return h, st
+}
+
+func createShare(t *testing.T, h *harness, c *http.Cookie, path, password string) shareView {
+	t.Helper()
+	body := fmt.Sprintf(`{"path":%q,"password":%q,"ttl_hours":24}`, path, password)
+	rec := h.do("POST", "/api/shares", strings.NewReader(body), c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create share: %d %s", rec.Code, rec.Body)
+	}
+	var v shareView
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func TestShareLinkServesTheFile(t *testing.T) {
+	h, _ := newShareHarness(t)
+	c := h.login("alice")
+	if rec := h.do("PUT", "/api/files/homes/alice/doc.txt", strings.NewReader("shared content"), c); rec.Code != http.StatusNoContent {
+		t.Fatal(rec.Body)
+	}
+
+	v := createShare(t, h, c, "homes/alice/doc.txt", "")
+	if v.Token == "" || !strings.HasSuffix(v.URL, "/s/"+v.Token) {
+		t.Fatalf("link = %#v", v)
+	}
+	if v.Protected {
+		t.Error("no password was set")
+	}
+
+	// No session at all: the URL is the whole credential.
+	rec := h.do("GET", "/s/"+v.Token, nil, nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "shared content" {
+		t.Fatalf("public fetch = %d %q", rec.Code, rec.Body)
+	}
+	// Nothing in between should hold a copy of somebody's private file.
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+}
+
+func TestShareLinkRefusesADirectory(t *testing.T) {
+	h, _ := newShareHarness(t)
+	c := h.login("alice")
+	rec := h.do("POST", "/api/shares", strings.NewReader(`{"path":"homes/alice"}`), c)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("sharing a directory = %d, want 400", rec.Code)
+	}
+}
+
+// Only something the creator can actually read may be shared, and the check is
+// made by opening it as them rather than by any rule written here.
+func TestShareLinkRefusesWhatTheCreatorCannotRead(t *testing.T) {
+	h, _ := newShareHarness(t)
+	c := h.login("alice")
+	rec := h.do("POST", "/api/shares", strings.NewReader(`{"path":"homes/alice/missing.txt"}`), c)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("sharing a missing file = %d, want 404", rec.Code)
+	}
+}
+
+func TestShareLinkPassword(t *testing.T) {
+	h, _ := newShareHarness(t)
+	c := h.login("alice")
+	if rec := h.do("PUT", "/api/files/homes/alice/secret.txt", strings.NewReader("classified"), c); rec.Code != http.StatusNoContent {
+		t.Fatal(rec.Body)
+	}
+	v := createShare(t, h, c, "homes/alice/secret.txt", "openme")
+	if !v.Protected {
+		t.Fatal("link should be protected")
+	}
+
+	// Without the password: a form, and definitely not the file.
+	rec := h.do("GET", "/s/"+v.Token, nil, nil)
+	if strings.Contains(rec.Body.String(), "classified") {
+		t.Fatal("the file was served without the password")
+	}
+	if !strings.Contains(rec.Body.String(), "<form") {
+		t.Errorf("expected a password form, got: %s", rec.Body)
+	}
+
+	// Wrong password: still no file.
+	req := httptest.NewRequest("POST", "/s/"+v.Token, strings.NewReader("password=nope"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	h.srv.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "classified") {
+		t.Fatal("a wrong password served the file")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("wrong password = %d, want 401", rec.Code)
+	}
+
+	// Right password: a redirect plus the cookie that remembers it.
+	req = httptest.NewRequest("POST", "/s/"+v.Token, strings.NewReader("password=openme"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	h.srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("correct password = %d, want 303", rec.Code)
+	}
+	var unlock *http.Cookie
+	for _, ck := range rec.Result().Cookies() {
+		if strings.HasPrefix(ck.Name, "darak_unlock_") {
+			unlock = ck
+		}
+	}
+	if unlock == nil {
+		t.Fatal("no unlock cookie was set")
+	}
+
+	req = httptest.NewRequest("GET", "/s/"+v.Token, nil)
+	req.AddCookie(unlock)
+	rec = httptest.NewRecorder()
+	h.srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "classified" {
+		t.Errorf("unlocked fetch = %d %q", rec.Code, rec.Body)
+	}
+}
+
+// Whoever has the link already has the token, so a cookie they could set
+// themselves would make the password decorative.
+func TestUnlockCookieCannotBeForged(t *testing.T) {
+	h, _ := newShareHarness(t)
+	c := h.login("alice")
+	if rec := h.do("PUT", "/api/files/homes/alice/s.txt", strings.NewReader("classified"), c); rec.Code != http.StatusNoContent {
+		t.Fatal(rec.Body)
+	}
+	v := createShare(t, h, c, "homes/alice/s.txt", "openme")
+
+	for _, guess := range []string{"1", "true", "yes", v.Token} {
+		req := httptest.NewRequest("GET", "/s/"+v.Token, nil)
+		req.AddCookie(&http.Cookie{Name: "darak_unlock_" + v.Token, Value: guess})
+		rec := httptest.NewRecorder()
+		h.srv.ServeHTTP(rec, req)
+		if strings.Contains(rec.Body.String(), "classified") {
+			t.Fatalf("a forged unlock cookie %q served the file", guess)
+		}
+	}
+}
+
+func TestShareRevokeAndOwnership(t *testing.T) {
+	h, st := newShareHarness(t)
+	alice := h.login("alice")
+	if rec := h.do("PUT", "/api/files/homes/alice/x.txt", strings.NewReader("data"), alice); rec.Code != http.StatusNoContent {
+		t.Fatal(rec.Body)
+	}
+	v := createShare(t, h, alice, "homes/alice/x.txt", "")
+
+	// A different session must not be able to revoke it, nor learn it exists.
+	bob := h.login("bob")
+	if rec := h.do("DELETE", "/api/shares/"+v.Token, nil, bob); rec.Code != http.StatusNotFound {
+		t.Errorf("bob revoking alice's link = %d, want 404", rec.Code)
+	}
+	if rec := h.do("GET", "/s/"+v.Token, nil, nil); rec.Code != http.StatusOK {
+		t.Error("the link should still work")
+	}
+
+	if rec := h.do("DELETE", "/api/shares/"+v.Token, nil, alice); rec.Code != http.StatusNoContent {
+		t.Fatalf("alice revoking her own link = %d", rec.Code)
+	}
+	// Revoked and never-existed look the same from outside.
+	if rec := h.do("GET", "/s/"+v.Token, nil, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("revoked link = %d, want 404", rec.Code)
+	}
+	if st.Len() != 0 {
+		t.Errorf("store still holds %d links", st.Len())
+	}
+}
+
+func TestShareListShowsOnlyYourOwn(t *testing.T) {
+	h, _ := newShareHarness(t)
+	alice := h.login("alice")
+	for _, n := range []string{"a.txt", "b.txt"} {
+		if rec := h.do("PUT", "/api/files/homes/alice/"+n, strings.NewReader("x"), alice); rec.Code != http.StatusNoContent {
+			t.Fatal(rec.Body)
+		}
+		createShare(t, h, alice, "homes/alice/"+n, "")
+	}
+
+	rec := h.do("GET", "/api/shares", nil, alice)
+	var out struct {
+		Links []shareView `json:"links"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Links) != 2 {
+		t.Errorf("alice sees %d links, want 2", len(out.Links))
+	}
+
+	bob := h.login("bob")
+	rec = h.do("GET", "/api/shares", nil, bob)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Links) != 0 {
+		t.Errorf("bob sees %d of alice's links, want 0", len(out.Links))
+	}
+}
+
+// Sharing has to be off unless it was wired, rather than accepting requests it
+// cannot honour.
+func TestSharingDisabled(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	c := h.login("alice")
+	if rec := h.do("POST", "/api/shares", strings.NewReader(`{"path":"homes/alice/x"}`), c); rec.Code != http.StatusNotImplemented {
+		t.Errorf("got %d, want 501", rec.Code)
+	}
+	if rec := h.do("GET", "/s/anything", nil, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("public endpoint = %d, want 404", rec.Code)
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/lesomnus/darak/internal/helperpool"
 	"github.com/lesomnus/darak/internal/run"
 	"github.com/lesomnus/darak/internal/server"
+	"github.com/lesomnus/darak/internal/share"
 	"github.com/lesomnus/darak/internal/vfs"
 )
 
@@ -155,8 +156,9 @@ func newStack(t *testing.T) *stack {
 	t.Cleanup(func() { pool.Close() })
 
 	srv, err := server.New(server.Config{
-		FS:   &vfs.FS{Pool: pool},
-		Auth: acceptAll{},
+		FS:     &vfs.FS{Pool: pool},
+		Auth:   acceptAll{},
+		Shares: share.NewStore(),
 		// The test client speaks plain HTTP.
 		SecureCookies: false,
 	})
@@ -344,5 +346,92 @@ func TestEndToEndTraversalIsRefused(t *testing.T) {
 		if bytes.Contains(body, []byte("root:")) {
 			t.Fatalf("%s leaked /etc/shadow", target)
 		}
+	}
+}
+
+// A share link is the one place the server reads a file for somebody who is not
+// the requester. It does it as the OWNER, through the owner's helper, so the
+// kernel still decides — the link changes nothing on disk.
+func TestEndToEndShareLink(t *testing.T) {
+	s := newStack(t)
+	alice := s.client("alice")
+	bob := s.client("bob")
+
+	resp := s.do(alice, "PUT", "/api/files/homes/alice/private.txt", strings.NewReader("alice only"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("put: %d", resp.StatusCode)
+	}
+
+	// bob cannot read it at all.
+	resp = s.do(bob, "GET", "/api/files/homes/alice/private.txt", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("bob direct read = %d, want 403", resp.StatusCode)
+	}
+
+	// ...until alice hands out a link, which anyone holding can fetch — with no
+	// session at all.
+	resp = s.do(alice, "POST", "/api/shares",
+		strings.NewReader(`{"path":"homes/alice/private.txt","ttl_hours":1}`))
+	var link struct {
+		Token string `json:"token"`
+		URL   string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&link); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	anonymous := &http.Client{}
+	resp = s.do(anonymous, "GET", "/s/"+link.Token, nil)
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(got) != "alice only" {
+		t.Fatalf("link fetch = %d %q", resp.StatusCode, got)
+	}
+
+	// Revoking closes it immediately — the thing a signed URL could not do.
+	resp = s.do(alice, "DELETE", "/api/shares/"+link.Token, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke = %d", resp.StatusCode)
+	}
+	resp = s.do(anonymous, "GET", "/s/"+link.Token, nil)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("revoked link = %d, want 404", resp.StatusCode)
+	}
+	if bytes.Contains(body, []byte("alice only")) {
+		t.Fatal("a revoked link still served the file")
+	}
+}
+
+// The link is opened as its owner every time, so deleting the file closes it
+// with no bookkeeping to remember.
+func TestShareLinkDiesWithTheFile(t *testing.T) {
+	s := newStack(t)
+	alice := s.client("alice")
+
+	resp := s.do(alice, "PUT", "/api/files/homes/alice/tmp.txt", strings.NewReader("here"))
+	resp.Body.Close()
+	resp = s.do(alice, "POST", "/api/shares",
+		strings.NewReader(`{"path":"homes/alice/tmp.txt","ttl_hours":1}`))
+	var link struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&link); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	resp = s.do(alice, "DELETE", "/api/files/homes/alice/tmp.txt", nil)
+	resp.Body.Close()
+
+	resp = s.do(&http.Client{}, "GET", "/s/"+link.Token, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("link to a deleted file = %d, want 404", resp.StatusCode)
 	}
 }

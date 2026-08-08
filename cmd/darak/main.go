@@ -22,6 +22,8 @@ import (
 	"github.com/lesomnus/darak/internal/helperpool"
 	"github.com/lesomnus/darak/internal/run"
 	"github.com/lesomnus/darak/internal/server"
+	"github.com/lesomnus/darak/internal/share"
+	"github.com/lesomnus/darak/internal/ui"
 	"github.com/lesomnus/darak/internal/vfs"
 )
 
@@ -44,6 +46,8 @@ func realMain() error {
 		maxHelpers    = flag.Int("max-helpers", helperpool.DefaultMaxHelpers, "cap on concurrently running helpers")
 		credsTTL      = flag.Duration("creds-ttl", helperpool.DefaultCredsTTL, "how long a credential lookup is reused; also the delay before a group change takes effect")
 		maxUpload     = flag.Int64("max-upload", 64<<30, "largest accepted request body in bytes")
+		sharesFile    = flag.String("shares", "/var/lib/darak/shares.json", "where share links are kept; must NOT be on the data volume")
+		noUI          = flag.Bool("no-ui", false, "serve only the API")
 	)
 	flag.Parse()
 
@@ -73,8 +77,23 @@ func realMain() error {
 	}
 	defer pool.Close()
 
+	// Share links live outside the served tree on purpose: nas-design.md §7
+	// requires the data volume to stay free of application state, because that
+	// volume is what later becomes a shared filesystem several gateways mount.
+	shares, err := share.NewFileStore(*sharesFile)
+	if err != nil {
+		return err
+	}
+
+	var web http.Handler
+	if !*noUI {
+		web = ui.Handler()
+	}
+
 	srv, err := server.New(server.Config{
 		FS:            &vfs.FS{Pool: pool},
+		Shares:        shares,
+		UI:            web,
 		Auth:          auth.NTLM{Runner: run.Exec{}, Path: *ntlmAuthBin},
 		SessionTTL:    *sessionTTL,
 		SecureCookies: *secureCookies,
@@ -87,7 +106,7 @@ func realMain() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go housekeeping(ctx, pool, srv)
+	go housekeeping(ctx, pool, srv, shares)
 
 	h := &http.Server{
 		Addr:    *addr,
@@ -123,7 +142,7 @@ func realMain() error {
 // Both are also self-limiting on their own — the pool reaps before starting a
 // helper, and an expired session never resolves — so this is about not holding
 // processes and memory for a system that has gone quiet, not about correctness.
-func housekeeping(ctx context.Context, pool *helperpool.Pool, srv *server.Server) {
+func housekeeping(ctx context.Context, pool *helperpool.Pool, srv *server.Server, shares *share.Store) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -133,6 +152,9 @@ func housekeeping(ctx context.Context, pool *helperpool.Pool, srv *server.Server
 		case <-t.C:
 			pool.Reap()
 			srv.Sessions().Sweep()
+			if err := shares.Sweep(); err != nil {
+				slog.Warn("could not persist the share store", "err", err)
+			}
 		}
 	}
 }

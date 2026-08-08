@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/share"
 	"github.com/lesomnus/darak/internal/vfs"
 	"github.com/lesomnus/darak/internal/wire"
 	"golang.org/x/sys/unix"
@@ -26,6 +27,13 @@ import (
 type Config struct {
 	FS   *vfs.FS
 	Auth auth.Authenticator
+
+	// Shares issues capability links. Nil disables the feature entirely rather
+	// than silently accepting requests it cannot honour.
+	Shares *share.Store
+
+	// UI, if set, is served at / for anything that is not an API route.
+	UI http.Handler
 
 	// SessionTTL bounds how long a login lasts. Sessions are held in memory, so
 	// they are also dropped by a restart.
@@ -73,6 +81,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/files/", s.authed(s.handlePut))
 	mux.HandleFunc("DELETE /api/files/", s.authed(s.handleDelete))
 	mux.HandleFunc("POST /api/dirs/", s.authed(s.handleMkdir))
+
+	mux.HandleFunc("POST /api/shares", s.authed(s.handleShareCreate))
+	mux.HandleFunc("GET /api/shares", s.authed(s.handleShareList))
+	mux.HandleFunc("DELETE /api/shares/", s.authed(s.handleShareRevoke))
+
+	// The public side takes no session: the URL is the credential.
+	mux.HandleFunc("GET /s/", s.handleSharePublic)
+	mux.HandleFunc("POST /s/", s.handleSharePublic)
+
+	if s.cfg.UI != nil {
+		mux.Handle("/", s.cfg.UI)
+	}
 	return mux
 }
 
