@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,10 +44,23 @@ type Group struct {
 	Members []string `json:"members"`
 }
 
+// Where an inventory came from. The interface says what each one means in its
+// own words, which is why this is a token and not a sentence.
+const (
+	SourceUsersync = "usersync"
+	SourceNSS      = "nss"
+)
+
 // Inventory is the account picture the admin page renders.
 type Inventory struct {
 	Users  []User  `json:"users"`
 	Groups []Group `json:"groups"`
+
+	// Source is SourceUsersync or SourceNSS. It matters because the NSS listing
+	// answers a weaker question: `getent passwd` with no argument asks each
+	// module to enumerate, and winbind declines by default, so a
+	// directory-served account is simply absent.
+	Source string `json:"source"`
 
 	// Warnings carry the reason a field is missing rather than letting it read
 	// as data. An operator seeing every user with no SMB account should be told
@@ -75,10 +90,17 @@ func (a *Admin) Inventory(ctx context.Context) (*Inventory, error) {
 		// a shell script and ships no usersync at all. Falling back to NSS keeps
 		// the page useful there, and keeps a broken usersync from turning "who
 		// exists" into a blank screen.
+		//
+		// The two reasons are reported separately. "Not installed" describes the
+		// deployment and needs no attention; "installed and failed" is something
+		// an operator should look at, and only that one carries the message.
 		users, groups = a.enumerate(ctx)
-		inv.Warnings = append(inv.Warnings, fmt.Sprintf(
-			"usersync could not be asked (%v); listing from the name service instead. "+
-				"Accounts served by a directory may be missing, because winbind does not enumerate them by default.", err))
+		inv.Source = SourceNSS
+		if !notInstalled(err) {
+			inv.Warnings = append(inv.Warnings, fmt.Sprintf("usersync could not be asked: %v", err))
+		}
+	} else {
+		inv.Source = SourceUsersync
 	}
 
 	// Group membership per user, resolved the same way the helper pool resolves
@@ -234,7 +256,18 @@ type DriftReport struct {
 	// OK is true when the roster and the system agree. It is reported
 	// separately from an empty Findings list so a failed audit is never
 	// indistinguishable from a clean one.
-	OK    bool   `json:"ok"`
+	OK bool `json:"ok"`
+
+	// Available is false when usersync is not installed at all.
+	//
+	// That is not a failure, it is a property of the deployment: the local
+	// stack provisions accounts from a shell script and ships no usersync, so
+	// there is no roster to compare against and nothing has gone wrong. Folding
+	// it into Error made the page show a broken exec message for a check that
+	// simply does not apply here.
+	Available bool `json:"available"`
+
+	// Error is set only when usersync EXISTS and could not answer.
 	Error string `json:"error,omitempty"`
 }
 
@@ -248,23 +281,39 @@ type DriftReport struct {
 // rather than treated as a failure.
 func (a *Admin) Audit(ctx context.Context) (*DriftReport, error) {
 	out, runErr := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "audit", "--json")
+	if notInstalled(runErr) {
+		return &DriftReport{Findings: []Drift{}, Available: false}, nil
+	}
 
 	var payload struct {
 		Findings []Drift `json:"findings"`
 	}
+	// audit logs to stderr and prints its report to stdout, so the JSON may not
+	// start at byte zero.
 	start := strings.IndexByte(out, '{')
 	if start >= 0 {
 		if err := json.Unmarshal([]byte(out[start:]), &payload); err == nil {
 			return &DriftReport{
-				Findings: nonNil(payload.Findings),
-				OK:       len(payload.Findings) == 0,
+				Findings:  nonNil(payload.Findings),
+				OK:        len(payload.Findings) == 0,
+				Available: true,
 			}, nil
 		}
 	}
 	if runErr != nil {
-		return &DriftReport{Findings: []Drift{}, OK: false, Error: runErr.Error()}, nil
+		return &DriftReport{Findings: []Drift{}, Available: true, Error: runErr.Error()}, nil
 	}
 	return nil, fmt.Errorf("admin: could not read the audit report")
+}
+
+// notInstalled reports whether a command failed because the binary is absent,
+// as opposed to running and returning something.
+//
+// run.Exec wraps the underlying error with %w, and os/exec reports a failed
+// PATH lookup as an *exec.Error wrapping exec.ErrNotFound, so the distinction
+// survives to here rather than having to be recovered from message text.
+func notInstalled(err error) bool {
+	return err != nil && errors.Is(err, exec.ErrNotFound)
 }
 
 func nonNil(d []Drift) []Drift {

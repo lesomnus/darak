@@ -3,6 +3,8 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -246,6 +248,108 @@ func TestSetSMBPasswordRejectsNewlineAndEmpty(t *testing.T) {
 			t.Errorf("SetSMBPassword(%q) was accepted", pw)
 		}
 	}
+}
+
+// The two ways usersync can fail to answer are different facts about the
+// deployment and must not collapse into one. "Not installed" is how the local
+// stack runs and needs no attention; "installed and failed" does.
+func TestAuditSeparatesNotInstalledFromFailed(t *testing.T) {
+	t.Run("not installed", func(t *testing.T) {
+		r, res := inventoryFixture()
+		r.err["usersync audit --json"] = fmt.Errorf("usersync audit --json: %w", &exec.Error{Name: "usersync", Err: exec.ErrNotFound})
+
+		rep, err := newTestAdmin(t, r, res).Audit(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Available {
+			t.Error("Available = true with no usersync on the system")
+		}
+		if rep.Error != "" {
+			t.Errorf("Error = %q; a tool this deployment does not use is not a failure to report", rep.Error)
+		}
+	})
+
+	t.Run("installed but failed", func(t *testing.T) {
+		r, res := inventoryFixture()
+		r.err["usersync audit --json"] = errors.New("usersync audit --json: exit status 2: no roster")
+
+		rep, err := newTestAdmin(t, r, res).Audit(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rep.Available {
+			t.Error("Available = false for a tool that ran")
+		}
+		if rep.Error == "" {
+			t.Error("Error is empty; an audit that could not run must say so")
+		}
+	})
+}
+
+// Same distinction on the inventory: falling back to NSS is worth stating, but
+// only the unexpected half is a warning.
+func TestInventorySourceReflectsWhereTheListCameFrom(t *testing.T) {
+	t.Run("usersync answered", func(t *testing.T) {
+		r, res := inventoryFixture()
+		inv, err := newTestAdmin(t, r, res).Inventory(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Source != SourceUsersync {
+			t.Errorf("Source = %q, want %q", inv.Source, SourceUsersync)
+		}
+	})
+
+	t.Run("not installed falls back quietly", func(t *testing.T) {
+		r, res := inventoryFixture()
+		r.err["usersync export --format csv"] = fmt.Errorf("wrapped: %w", &exec.Error{Name: "usersync", Err: exec.ErrNotFound})
+		r.out["getent passwd"] = "alice:x:3001:3001:Alice:/homes/alice:/usr/sbin/nologin\nroot:x:0:0:root:/root:/bin/sh\n"
+		r.out["getent group"] = "team-a:x:10001:\nadmin:x:2000:alice\n"
+
+		inv, err := newTestAdmin(t, r, res).Inventory(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Source != SourceNSS {
+			t.Errorf("Source = %q, want %q", inv.Source, SourceNSS)
+		}
+		for _, w := range inv.Warnings {
+			if strings.Contains(w, "usersync") {
+				t.Errorf("warned about a tool this deployment does not use: %q", w)
+			}
+		}
+		// The band filter is what keeps root and the operator group off a page
+		// about researchers.
+		if len(inv.Users) != 1 || inv.Users[0].Name != "alice" {
+			t.Errorf("users = %+v, want just alice (root is below the managed floor)", inv.Users)
+		}
+		if len(inv.Groups) != 1 || inv.Groups[0].Name != "team-a" {
+			t.Errorf("groups = %+v, want just team-a (admin gid 2000 is below the band)", inv.Groups)
+		}
+	})
+
+	t.Run("installed but failed is a warning", func(t *testing.T) {
+		r, res := inventoryFixture()
+		r.err["usersync export --format csv"] = errors.New("exit status 1: bad roster")
+
+		inv, err := newTestAdmin(t, r, res).Inventory(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Source != SourceNSS {
+			t.Errorf("Source = %q, want %q", inv.Source, SourceNSS)
+		}
+		found := false
+		for _, w := range inv.Warnings {
+			if strings.Contains(w, "usersync") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("warnings = %v; a usersync that exists and failed must be surfaced", inv.Warnings)
+		}
+	})
 }
 
 func TestAuditParsesFindingsFromANonZeroExit(t *testing.T) {

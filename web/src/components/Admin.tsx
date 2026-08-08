@@ -65,6 +65,13 @@ export function Admin({ me, onError }: { me: string; onError: (message: string) 
         <h2>
           사용자 <span className="muted small">{inv ? `${inv.users.length}명` : ''}</span>
         </h2>
+        {inv?.source === 'nss' && (
+          <p className="muted small">
+            이 배포는 usersync로 계정을 관리하지 않습니다. 목록은 시스템 이름 서비스에서 읽었으며,
+            디렉터리 서비스가 제공하는 계정은 빠져 있을 수 있습니다(winbind는 기본적으로 열거에
+            응답하지 않습니다).
+          </p>
+        )}
         {inv?.warnings?.map((w) => (
           <p className="warn" key={w}>
             {w}
@@ -230,6 +237,12 @@ function barClass(ratio: number): string {
  */
 function Drift({ drift }: { drift: DriftReport | null }) {
   if (!drift) return null
+
+  // Nothing to compare against is not a problem to report. Showing a failed
+  // exec here told the operator something was broken when the deployment
+  // simply does not manage accounts this way.
+  if (!drift.available) return null
+
   if (drift.ok) {
     return (
       <section>
@@ -241,7 +254,13 @@ function Drift({ drift }: { drift: DriftReport | null }) {
   return (
     <section>
       <h2>선언 대조</h2>
-      {drift.error && <p className="warn">{drift.error}</p>}
+      {drift.error && (
+        <p className="warn">
+          usersync가 대조에 실패했습니다. roster와 시스템이 어긋났는지 알 수 없는 상태입니다.
+          <br />
+          <code className="small">{drift.error}</code>
+        </p>
+      )}
       <ul className="findings">
         {drift.findings.map((f, i) => (
           <li key={`${f.kind}-${f.name}-${i}`}>

@@ -86,6 +86,11 @@ export interface AdminGroup {
 export interface Inventory {
   users: AdminUser[]
   groups: AdminGroup[]
+  /**
+   * 'usersync' or 'nss'. The NSS listing answers a weaker question — winbind
+   * declines to enumerate — so the page says which one it is looking at.
+   */
+  source: string
   /** Why a field is missing, so an absence never reads as data. */
   warnings?: string[]
 }
@@ -123,5 +128,11 @@ export interface Drift {
 export interface DriftReport {
   findings: Drift[]
   ok: boolean
+  /**
+   * False when usersync is not installed. That is a property of the deployment,
+   * not a failure — there is no roster here to compare against.
+   */
+  available: boolean
+  /** Set only when usersync EXISTS and could not answer. */
   error?: string
 }
