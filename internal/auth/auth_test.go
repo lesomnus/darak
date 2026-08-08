@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -29,8 +28,10 @@ func TestAuthenticate(t *testing.T) {
 		want    bool
 		wantErr bool
 	}{
-		"accepted": {out: "Authenticated: yes\n.\n", want: true},
-		"rejected": {out: "Authenticated: no\n.\n", want: false},
+		"accepted":              {out: "OK\n", want: true},
+		"accepted with message": {out: "OK user=alice\n", want: true},
+		"rejected":              {out: "ERR\n", want: false},
+		"rejected with message": {out: "ERR Wrong password\n", want: false},
 		// A helper that cannot run is not a wrong password. Reporting it as one
 		// would make every user look like they had forgotten theirs at once, and
 		// send whoever is debugging it to the wrong place.
@@ -38,9 +39,14 @@ func TestAuthenticate(t *testing.T) {
 		// Likewise an answer in a shape this does not recognise: the assumption
 		// about what is being asked no longer holds, and guessing "denied" would
 		// hide that behind what looks like ordinary user error.
-		"no verdict":   {out: "NT_STATUS_OK\n", wantErr: true},
-		"empty":        {out: "", wantErr: true},
-		"unknown word": {out: "Authenticated: maybe\n", wantErr: true},
+		"no verdict": {out: "NT_STATUS_OK\n", wantErr: true},
+		"empty":      {out: "", wantErr: true},
+		// squid's "broken helper" answer, and the reply the WRONG helper protocol
+		// gives. The first version of this code spoke ntlm-server-1, which answers
+		// "Authenticated: No" to a correct password — reporting that as a denial
+		// would have made every login look like a typo.
+		"broken helper":  {out: "BH\n", wantErr: true},
+		"wrong protocol": {out: "Authenticated: No\n.\n", wantErr: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := &fakeRunner{out: tt.out, err: tt.err}
@@ -73,7 +79,7 @@ func TestAuthenticate(t *testing.T) {
 // on a file server means every user whose files this is meant to protect.
 func TestPasswordNeverReachesTheCommandLine(t *testing.T) {
 	const secret = "correct horse battery staple"
-	r := &fakeRunner{out: "Authenticated: yes\n"}
+	r := &fakeRunner{out: "OK\n"}
 	if _, err := (NTLM{Runner: r}).Authenticate(context.Background(), "skim", secret); err != nil {
 		t.Fatal(err)
 	}
@@ -86,29 +92,46 @@ func TestPasswordNeverReachesTheCommandLine(t *testing.T) {
 			t.Errorf("argv carries a password-ish flag: %q", a)
 		}
 	}
-	if !strings.Contains(r.stdin, base64.StdEncoding.EncodeToString([]byte(secret))) {
-		t.Error("the password should be passed over stdin")
+	if !strings.Contains(r.stdin, "correct%20horse%20battery%20staple") {
+		t.Errorf("the password should be passed over stdin, encoded: %q", r.stdin)
 	}
 }
 
-// The helper protocol is line-based, so an unencoded value could end a line
-// early and let the rest be read as further protocol directives. Base64 removes
-// the possibility rather than filtering for it.
-func TestCredentialsCannotInjectProtocolLines(t *testing.T) {
-	r := &fakeRunner{out: "Authenticated: yes\n"}
-	_, err := (NTLM{Runner: r}).Authenticate(context.Background(), "skim",
-		"x\nAuthenticated: yes\n.\n")
+// The request is one line, with a space between the two fields. Encoding makes
+// both of those unrepresentable inside a value, so no credential can restructure
+// the request no matter what it contains.
+func TestCredentialsCannotRestructureTheRequest(t *testing.T) {
+	r := &fakeRunner{out: "OK\n"}
+	_, err := (NTLM{Runner: r}).Authenticate(context.Background(), "skim", "x\nbob y\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Exactly three lines of protocol plus the trailing empty one: the two
-	// credential lines and the terminator.
-	lines := strings.Split(strings.TrimSuffix(r.stdin, "\n"), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("stdin has %d lines, want 3:\n%q", len(lines), r.stdin)
+	if n := strings.Count(r.stdin, "\n"); n != 1 {
+		t.Errorf("stdin has %d newlines, want exactly the terminator: %q", n, r.stdin)
 	}
-	if !strings.HasPrefix(lines[0], "Username:: ") || !strings.HasPrefix(lines[1], "Password:: ") || lines[2] != "." {
-		t.Errorf("unexpected protocol shape:\n%q", r.stdin)
+	if n := strings.Count(r.stdin, " "); n != 1 {
+		t.Errorf("stdin has %d spaces, want exactly the field separator: %q", n, r.stdin)
+	}
+}
+
+// ntlm_auth unescapes both fields unconditionally, so a literal '%' that is not
+// encoded arrives as the start of an escape and the password is simply wrong.
+// This is a correctness requirement, not only a safety one — and it was found by
+// measuring the real helper, not by reading about it.
+func TestPercentIsEncoded(t *testing.T) {
+	r := &fakeRunner{out: "OK\n"}
+	if _, err := (NTLM{Runner: r}).Authenticate(context.Background(), "skim", "a%b"); err != nil {
+		t.Fatal(err)
+	}
+	user, pass, ok := strings.Cut(strings.TrimSuffix(r.stdin, "\n"), " ")
+	if !ok {
+		t.Fatalf("stdin has no field separator: %q", r.stdin)
+	}
+	if user != "skim" {
+		t.Errorf("user field = %q", user)
+	}
+	if pass != "a%25b" {
+		t.Errorf("password field = %q, want a%%25b", pass)
 	}
 }
 
@@ -127,7 +150,7 @@ func TestRefusedWithoutRunning(t *testing.T) {
 		"empty password":  {"skim", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := &fakeRunner{out: "Authenticated: yes\n"}
+			r := &fakeRunner{out: "OK\n"}
 			got, err := (NTLM{Runner: r}).Authenticate(context.Background(), tt.user, tt.pass)
 			if err != nil {
 				t.Fatalf("should be a plain denial, not an error: %v", err)
@@ -143,7 +166,7 @@ func TestRefusedWithoutRunning(t *testing.T) {
 }
 
 func TestBinaryIsOverridable(t *testing.T) {
-	r := &fakeRunner{out: "Authenticated: yes\n"}
+	r := &fakeRunner{out: "OK\n"}
 	if _, err := (NTLM{Runner: r, Path: "/usr/bin/ntlm_auth"}).Authenticate(context.Background(), "skim", "pw"); err != nil {
 		t.Fatal(err)
 	}

@@ -164,6 +164,42 @@ func DomainRoot(p string) (string, error) {
 	}
 }
 
+// IsTempName reports whether a name is a partial upload rather than a file
+// anyone asked for. Listings hide these: a crashed upload should not appear as a
+// mysterious zero-byte entry the user has no idea how to get rid of.
+func IsTempName(name string) bool { return strings.HasPrefix(name, tmpPrefix) }
+
+// CreateMode and DirMode are the modes a new file and directory get.
+//
+// They mirror the smb.conf masks exactly, because the requirement is that the
+// two access paths behave identically: a file created through the web and one
+// created over SMB must come out the same, or "same data, same permission rules"
+// is false in the one place users would notice. A home is private (0600/0700); a
+// team folder is group-writable and setgid, so that what is created inside it
+// belongs to the team rather than to whoever made it.
+func CreateMode(p string) (uint32, error) {
+	domain, err := DomainRoot(p)
+	if err != nil {
+		return 0, err
+	}
+	if strings.HasPrefix(domain, "teams/") {
+		return 0o660, nil
+	}
+	return 0o600, nil
+}
+
+// DirMode is CreateMode for directories.
+func DirMode(p string) (uint32, error) {
+	domain, err := DomainRoot(p)
+	if err != nil {
+		return 0, err
+	}
+	if strings.HasPrefix(domain, "teams/") {
+		return 0o2770, nil
+	}
+	return 0o700, nil
+}
+
 // trashName builds the name an overwritten or deleted file is kept under.
 //
 // The timestamp uses '-' rather than ':' because the trash is visible over SMB
@@ -255,12 +291,9 @@ func (f *FS) Write(ctx context.Context, user, p string, src io.Reader, mode uint
 // leaves a window in which the file appears, and it would then be overwritten
 // with no copy kept. An absent target is simply nothing to preserve.
 func (f *FS) linkToTrash(ctx context.Context, user, p, domain string) error {
-	trash := path.Join(domain, TrashDir)
-	if err := f.Mkdir(ctx, user, trash, 0o700); err != nil {
-		var e *Errno
-		if !errors.As(err, &e) || e.Err != unix.EEXIST {
-			return err
-		}
+	trash, err := f.ensureTrash(ctx, user, domain)
+	if err != nil {
+		return err
 	}
 
 	// A second overwrite within the same second would collide; the suffix makes
@@ -293,6 +326,30 @@ func (f *FS) linkToTrash(ctx context.Context, user, p, domain string) error {
 	}
 }
 
+// ensureTrash creates the domain's trash directory if it is missing and returns
+// its path.
+//
+// Its mode follows the domain, exactly like every other directory. A team's
+// trash created 0700 would belong to whoever happened to overwrite something
+// first, and every other member's next write would fail at the link step with
+// EACCES — the file untouched, the error opaque, and the cause a directory
+// nobody looks at. It is the same failure the setgid layout exists to prevent,
+// reintroduced by the one directory this package creates on its own.
+func (f *FS) ensureTrash(ctx context.Context, user, domain string) (string, error) {
+	trash := path.Join(domain, TrashDir)
+	mode, err := DirMode(trash)
+	if err != nil {
+		return "", err
+	}
+	if err := f.Mkdir(ctx, user, trash, mode); err != nil {
+		var e *Errno
+		if !errors.As(err, &e) || e.Err != unix.EEXIST {
+			return "", err
+		}
+	}
+	return trash, nil
+}
+
 // Remove moves a path into its domain's trash instead of unlinking it.
 //
 // A delete is as recoverable as an overwrite here, which is the point: the
@@ -307,12 +364,9 @@ func (f *FS) Remove(ctx context.Context, user, p string) error {
 		// Already in the trash: emptying it has to actually remove things.
 		return f.unlink(ctx, user, p)
 	}
-	trash := path.Join(domain, TrashDir)
-	if err := f.Mkdir(ctx, user, trash, 0o700); err != nil {
-		var e *Errno
-		if !errors.As(err, &e) || e.Err != unix.EEXIST {
-			return err
-		}
+	trash, err := f.ensureTrash(ctx, user, domain)
+	if err != nil {
+		return err
 	}
 	resp, _, err := f.do(ctx, user, &wire.Request{
 		Op: wire.OpRename, Path: p, Path2: path.Join(trash, f.trashName(p)),

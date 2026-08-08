@@ -44,7 +44,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func run(t *testing.T, name string, args ...string) {
+func runCmd(t *testing.T, name string, args ...string) {
 	t.Helper()
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
@@ -61,17 +61,17 @@ func setupWorld(t *testing.T) {
 		t.Fatalf("helper binary missing at %s: %v", helperBin, err)
 	}
 
-	run(t, "groupadd", "-f", "-g", "10001", "team-a")
+	runCmd(t, "groupadd", "-f", "-g", "10001", "team-a")
 	for _, u := range []struct {
 		name     string
 		uid, gid int
 	}{{"alice", aliceUID, aliceGID}, {"bob", bobUID, bobGID}} {
 		if _, err := exec.Command("id", u.name).Output(); err != nil {
-			run(t, "groupadd", "-g", fmt.Sprint(u.gid), u.name)
-			run(t, "useradd", "-M", "-u", fmt.Sprint(u.uid), "-g", fmt.Sprint(u.gid),
+			runCmd(t, "groupadd", "-g", fmt.Sprint(u.gid), u.name)
+			runCmd(t, "useradd", "-M", "-u", fmt.Sprint(u.uid), "-g", fmt.Sprint(u.gid),
 				"-d", filepath.Join(dataRoot, "homes", u.name), "-s", "/usr/sbin/nologin", u.name)
 		}
-		run(t, "usermod", "-aG", "team-a", u.name)
+		runCmd(t, "usermod", "-aG", "team-a", u.name)
 	}
 
 	// The root itself has to be traversable by everyone; what is private is what

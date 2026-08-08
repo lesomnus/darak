@@ -8,6 +8,13 @@
 #   docker run --rm darak-test
 FROM golang:1.26-trixie
 
+# samba + winbind so the ntlm_auth contract is checked against the real thing
+# rather than against what its documentation was read to mean.
+RUN apt-get update -qq \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+		samba samba-common-bin winbind \
+	&& rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 COPY . .
 

@@ -381,3 +381,90 @@ func assertNoTempFiles(t *testing.T, root, dir string) {
 type errReader struct{ err error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// The two access paths must produce identical modes, or "same data, same
+// permission rules" is false exactly where users would notice: a file uploaded
+// through the web that a teammate cannot edit, while the one they dragged into
+// the SMB share is fine.
+func TestModesMirrorTheSambaMasks(t *testing.T) {
+	for p, want := range map[string]uint32{
+		"homes/alice/x.txt":    0o600,
+		"teams/design/x.txt":   0o660,
+		"teams/design/a/b.txt": 0o660,
+	} {
+		got, err := CreateMode(p)
+		if err != nil {
+			t.Fatalf("CreateMode(%q): %v", p, err)
+		}
+		if got != want {
+			t.Errorf("CreateMode(%q) = %04o, want %04o", p, got, want)
+		}
+	}
+	for p, want := range map[string]uint32{
+		"homes/alice/sub":  0o700,
+		"teams/design/sub": 0o2770,
+	} {
+		got, err := DirMode(p)
+		if err != nil {
+			t.Fatalf("DirMode(%q): %v", p, err)
+		}
+		if got != want {
+			t.Errorf("DirMode(%q) = %04o, want %04o", p, got, want)
+		}
+	}
+	// A team directory without setgid would put files created inside it in the
+	// creator's own group, and every teammate would be read-only on them.
+	if m, _ := DirMode("teams/design/sub"); m&0o2000 == 0 {
+		t.Error("a team directory must be setgid")
+	}
+	if _, err := CreateMode("stray.txt"); err == nil {
+		t.Error("a path outside any domain has no defined mode and must be refused")
+	}
+}
+
+func TestIsTempName(t *testing.T) {
+	if !IsTempName(tmpPrefix + "abc") {
+		t.Error("a partial upload must be recognised so listings can hide it")
+	}
+	if IsTempName("report.txt") || IsTempName(".trash") {
+		t.Error("ordinary names must not be hidden")
+	}
+}
+
+// The trash is a directory this package creates on its own, so it is the one
+// place the domain's mode has to be applied by hand — and the only place it was
+// forgotten. Created 0700 in a team folder it belongs to whoever overwrote
+// something first, and every other member's next write fails at the link step
+// with EACCES: the file untouched, the error opaque, and the cause a directory
+// nobody thinks to look at. That is the exact failure the setgid layout exists
+// to prevent, reintroduced one level down.
+func TestTrashDirectoryModeFollowsTheDomain(t *testing.T) {
+	fs, root := newFS(t)
+	ctx := context.Background()
+
+	for _, tt := range []struct {
+		path string
+		want os.FileMode
+	}{
+		{"teams/design/x.txt", os.ModeSetgid | 0o770},
+		{"homes/alice/x.txt", 0o700},
+	} {
+		// Two writes: the second is what creates the trash.
+		for i := 0; i < 2; i++ {
+			if err := fs.Write(ctx, "alice", tt.path, strings.NewReader("v"), 0o660); err != nil {
+				t.Fatal(err)
+			}
+		}
+		domain, err := DomainRoot(tt.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(filepath.Join(root, domain, TrashDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode() &^ os.ModeDir; got != tt.want {
+			t.Errorf("%s trash mode = %v, want %v", domain, got, tt.want)
+		}
+	}
+}
