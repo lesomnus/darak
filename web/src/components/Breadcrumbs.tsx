@@ -1,4 +1,5 @@
 import { TRASH_DIR } from '../lib/format'
+import { Icon } from './Icon'
 
 /**
  * Labels the path in the words people use.
@@ -64,9 +65,10 @@ export function Breadcrumbs({
         const last = i === parts.length - 1 || to === path
         return (
           <span key={to} className="crumb">
-            <span className="sep" aria-hidden="true">
-              ›
-            </span>
+            {/* An SVG chevron rather than the character '›', which is a
+                different weight and sits at a different height in every font
+                the stack falls through. */}
+            <Icon name="chevron" size={14} className="sep" />
             {last ? (
               <span className="current" aria-current="page">
                 {text}

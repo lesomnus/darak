@@ -3,6 +3,7 @@ import { api, filesUrl } from '../api'
 import type { Entry } from '../types'
 import { domainRoot, sortEntries, TRASH_DIR } from '../lib/format'
 import { FileRow } from './FileRow'
+import { Icon } from './Icon'
 
 interface UploadState {
   current: string
@@ -121,6 +122,7 @@ export function Browser({
     >
       <div className="toolbar">
         <label className="button">
+          <Icon name="upload" size={17} />
           파일 올리기
           <input
             type="file"
@@ -133,9 +135,10 @@ export function Browser({
           />
         </label>
         <button type="button" className="ghost" onClick={() => void mkdir()} disabled={!canWrite}>
-          새 폴더
+          <Icon name="folder-plus" size={17} />새 폴더
         </button>
         <button type="button" className="ghost" onClick={openTrash}>
+          <Icon name="trash" size={17} />
           휴지통
         </button>
       </div>
@@ -144,7 +147,16 @@ export function Browser({
 
       {upload && (
         <div className="progress">
-          <div className="bar" style={{ width: `${(upload.done / upload.total) * 100}%` }} />
+          {/* The bar needs a track behind it, or a 10%-done upload reads as a
+              stray blue dash rather than as progress through something. */}
+          <div
+            className="track"
+            role="progressbar"
+            aria-valuenow={upload.done}
+            aria-valuemax={upload.total}
+          >
+            <div className="bar" style={{ width: `${(upload.done / upload.total) * 100}%` }} />
+          </div>
           <span className="muted small">
             {upload.current} ({upload.done + 1}/{upload.total})
           </span>
@@ -153,7 +165,7 @@ export function Browser({
 
       <main aria-live="polite">
         {loadError && <p className="empty error">{loadError}</p>}
-        {!loadError && entries === null && <p className="empty">불러오는 중…</p>}
+        {!loadError && entries === null && <Skeleton />}
         {!loadError && entries !== null && entries.length === 0 && (
           <p className="empty">{inTrash ? '휴지통이 비어 있습니다.' : '비어 있습니다.'}</p>
         )}
@@ -177,6 +189,35 @@ export function Browser({
             )
           })}
       </main>
+    </div>
+  )
+}
+
+/**
+ * Placeholder rows while the listing loads.
+ *
+ * The text "불러오는 중…" was one line in the middle of an empty page, so the
+ * whole list jumped into place underneath it when the response landed. Rows of
+ * the right height mean the only thing that changes is their contents.
+ *
+ * Six of them: enough to fill the fold on a phone, few enough that a directory
+ * with two files does not flash a wall of grey.
+ */
+function Skeleton() {
+  return (
+    <div aria-hidden="true">
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <div className="row skeleton-row" key={i}>
+          <span className="icon">
+            <span className="skeleton" />
+          </span>
+          <span className="name">
+            {/* Varied widths -- six identical bars read as a loading graphic,
+                varied ones read as filenames that have not arrived. */}
+            <span className="skeleton" style={{ width: `${[58, 34, 71, 45, 62, 39][i]}%` }} />
+          </span>
+        </div>
+      ))}
     </div>
   )
 }

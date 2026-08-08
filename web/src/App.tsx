@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import type { Me } from './types'
 import { usePath } from './lib/usePath'
+import { useTheme } from './lib/useTheme'
+import { Icon } from './components/Icon'
+import { ThemeSwitch } from './components/ThemeSwitch'
 import { Login } from './components/Login'
 import { Breadcrumbs } from './components/Breadcrumbs'
 import { Browser } from './components/Browser'
@@ -14,6 +17,7 @@ type Session = { state: 'unknown' } | { state: 'out' } | { state: 'in'; me: Me }
 export function App() {
   const [session, setSession] = useState<Session>({ state: 'unknown' })
   const [path, navigate] = usePath()
+  const [theme, setTheme] = useTheme()
   const [error, setError] = useState('')
   const [sharePath, setSharePath] = useState<string | null>(null)
   const [showShares, setShowShares] = useState(false)
@@ -82,8 +86,14 @@ export function App() {
   return (
     <>
       <header>
-        <button type="button" className="icon" title="처음으로" onClick={() => navigate('')}>
-          📁
+        <button
+          type="button"
+          className="icon"
+          title="처음으로"
+          aria-label="처음으로"
+          onClick={() => navigate('')}
+        >
+          <Icon name="folder" size={22} />
         </button>
         <Breadcrumbs path={path} user={user} onNavigate={navigate} />
         <span className="spacer" />
@@ -93,15 +103,25 @@ export function App() {
             className="ghost"
             onClick={() => navigate(path === ADMIN_PATH ? '' : ADMIN_PATH)}
           >
-            {path === ADMIN_PATH ? '파일로' : isAdmin ? '관리' : '팀'}
+            <Icon name={path === ADMIN_PATH ? 'folder' : isAdmin ? 'shield' : 'team'} size={17} />
+            <span className="label">{path === ADMIN_PATH ? '파일로' : isAdmin ? '관리' : '팀'}</span>
           </button>
         )}
         <button type="button" className="ghost" onClick={() => setShowShares(true)}>
-          공유 링크
+          <Icon name="link" size={17} />
+          <span className="label">공유 링크</span>
         </button>
+        <ThemeSwitch theme={theme} onChange={setTheme} />
         <span className="muted small who">{user}</span>
-        <button type="button" className="ghost" onClick={() => void signOut()}>
-          로그아웃
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => void signOut()}
+          title="로그아웃"
+          aria-label="로그아웃"
+        >
+          <Icon name="logout" size={17} />
+          <span className="label">로그아웃</span>
         </button>
       </header>
 
@@ -144,16 +164,18 @@ function Start({ user, onNavigate }: { user: string; onNavigate: (path: string) 
   return (
     <main className="start">
       <button type="button" className="row" onClick={() => onNavigate(`homes/${user}`)}>
-        <span className="icon" aria-hidden="true">
-          🏠
+        <span className="icon" data-kind="folder">
+          <Icon name="home" size={22} />
         </span>
         <span className="name">내 폴더</span>
+        <Icon name="chevron" size={16} className="go" />
       </button>
       <button type="button" className="row" onClick={() => onNavigate('teams')}>
-        <span className="icon" aria-hidden="true">
-          👥
+        <span className="icon" data-kind="doc">
+          <Icon name="team" size={22} />
         </span>
         <span className="name">팀 폴더</span>
+        <Icon name="chevron" size={16} className="go" />
       </button>
     </main>
   )

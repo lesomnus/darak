@@ -1,32 +1,83 @@
 /* One stylesheet, no framework. The people this is for are on a company laptop
-   or a phone; what it needs to be is legible and obvious, not novel. */
+   or a phone; what it needs to be is legible and obvious, not novel.
+
+   Every colour is declared ONCE, through light-dark(). The alternative -- a
+   dark block that redeclares the whole palette -- means every new token has two
+   homes and the second one gets forgotten. `color-scheme` is what makes it
+   work, and it pays for itself twice over: scrollbars, date pickers, the file
+   chooser and form controls follow the theme without a line of CSS, which a
+   class-based dark mode never gets.
+
+   The three theme states live on <html data-theme>: absent is "follow the OS",
+   which is the default and is not the same as having picked whichever one the
+   OS is on right now. See lib/useTheme.ts. */
 
 :root {
-  --bg: #ffffff;
-  --fg: #1b1d1f;
-  --muted: #6b7177;
-  --line: #e2e5e8;
-  --accent: #2a63d0;
-  --accent-fg: #ffffff;
-  --hover: #f3f6fa;
-  --error: #b3261e;
-  --ok: #146c2e;
-  --warn: #8a5300;
-  --radius: 8px;
+  color-scheme: light dark;
+
+  --bg: light-dark(#fafbfc, #121417);
+  /* A card has to sit ON something. The page is very slightly off-white so a
+     surface can be pure white and still read as raised. */
+  --surface: light-dark(#ffffff, #191c21);
+  --surface-2: light-dark(#f2f4f7, #21252b);
+  --hover: light-dark(#eef1f6, #262b32);
+
+  --fg: light-dark(#15181d, #e8eaee);
+  /* Between --fg and --muted. Secondary text that still has to be read -- a
+     table cell, a file size -- was using --muted and disappearing. */
+  --fg-soft: light-dark(#464c56, #b2b9c3);
+  --muted: light-dark(#6a727e, #8993a0);
+
+  --line: light-dark(#e3e6ec, #272c33);
+  --line-strong: light-dark(#cfd4dd, #363c45);
+
+  --accent: light-dark(#3160d8, #7aa2ff);
+  --accent-fg: light-dark(#ffffff, #0d1117);
+  --accent-soft: light-dark(#eaf0fe, #1b2740);
+
+  --error: light-dark(#c0392b, #ef8a7d);
+  --error-soft: light-dark(#fdecea, #2f1d1b);
+  --ok: light-dark(#12683a, #63cf90);
+  --warn: light-dark(#8a5300, #e0ab5a);
+
+  /* Icon tones. A listing is skimmed, not read, and colour is what makes the
+     shape land before the filename does. */
+  --ico-folder: light-dark(#d3941f, #e3b45f);
+  --ico-image: light-dark(#238a5a, #57c690);
+  --ico-video: light-dark(#7350cf, #a98ceb);
+  --ico-audio: light-dark(#b73d85, #e07ab5);
+  --ico-pdf: light-dark(#c53d2f, #ef8072);
+  --ico-archive: light-dark(#82734f, #b6a67e);
+  --ico-sheet: light-dark(#16806a, #4cc4a3);
+  --ico-doc: light-dark(#3160d8, #7aa2ff);
+  --ico-file: light-dark(#7b838f, #8f99a6);
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-full: 999px;
+  /* Kept: the old stylesheet used this name everywhere. */
+  --radius: var(--r-md);
+
+  /* A shadow in dark mode is nearly invisible, so the dark half leans on a
+     deeper black and the border does the rest of the work. */
+  --shadow-sm: 0 1px 2px light-dark(rgb(16 20 28 / 6%), rgb(0 0 0 / 40%));
+  --shadow-md: 0 4px 12px -2px light-dark(rgb(16 20 28 / 8%), rgb(0 0 0 / 50%));
+  --shadow-lg: 0 12px 32px -8px light-dark(rgb(16 20 28 / 16%), rgb(0 0 0 / 62%));
+
+  --t-xs: 0.75rem;
+  --t-sm: 0.8125rem;
+  --t-lg: 1.0625rem;
+  --t-xl: 1.35rem;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181a;
-    --fg: #e6e8ea;
-    --muted: #9aa1a8;
-    --line: #2b2f33;
-    --accent: #5a8dee;
-    --accent-fg: #10131a;
-    --hover: #1f2226;
-    --error: #f2b8b5;
-  --ok: #7ddb9b;
-  --warn: #e7b768;
-  }
+
+/* The two explicit choices. Only `color-scheme` changes, because that is the
+   single switch every light-dark() above is reading. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 * {
@@ -41,14 +92,24 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
+  /* 15px, not 16: a file manager is a dense list and 16 makes it sprawl. Form
+     controls go back up to 16 below -- under that, iOS zooms on focus. */
   font:
-    16px/1.5 -apple-system,
+    15px/1.55 -apple-system,
     BlinkMacSystemFont,
     'Segoe UI',
     'Noto Sans KR',
     system-ui,
     sans-serif;
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every icon in the set. Sized by its own width/height attributes; this is
+   about how it sits against text. */
+.ico {
+  display: block;
+  flex: none;
 }
 
 button,
@@ -56,59 +117,109 @@ input,
 select {
   font: inherit;
   color: inherit;
-  border-radius: var(--radius);
+  border-radius: var(--r-sm);
 }
 button,
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 0;
-  padding: 0.55rem 0.9rem;
+  gap: 0.4rem;
+  border: 1px solid transparent;
+  padding: 0.5rem 0.85rem;
   background: var(--accent);
   color: var(--accent-fg);
+  font-weight: 500;
   cursor: pointer;
   /* Comfortably tappable on a phone. */
-  min-height: 2.75rem;
-  border-radius: var(--radius);
+  min-height: 2.5rem;
+  border-radius: var(--r-md);
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
 }
 button.ghost,
 .ghost {
-  background: transparent;
+  background: var(--surface);
   color: var(--fg);
-  border: 1px solid var(--line);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-sm);
+}
+button.ghost:hover:not(:disabled),
+.ghost:hover {
+  background: var(--hover);
 }
 button.icon {
   background: transparent;
-  border: 0;
-  font-size: 1.25rem;
-  padding: 0.3rem 0.5rem;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--fg-soft);
+  padding: 0.4rem;
   min-height: 0;
+  border-radius: var(--r-sm);
+}
+button.icon:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
 }
 button:hover:not(:disabled),
 .button:hover {
-  filter: brightness(1.06);
+  /* A brightness filter washes out a white foreground and does nothing useful
+     in dark mode; mixing toward the foreground darkens and lightens correctly
+     in both. */
+  background: color-mix(in oklab, var(--accent) 88%, var(--fg));
 }
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+input,
+select,
+textarea {
+  /* 16px: anything smaller makes iOS zoom the page on focus, and it never
+     zooms back out. */
+  font-size: 16px;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: var(--r-md);
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .muted {
   color: var(--muted);
 }
+.soft {
+  color: var(--fg-soft);
+}
 .small {
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
 }
 .error {
   color: var(--error);
 }
 .error.bar {
   margin: 0.5rem 0.75rem 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--error-soft);
+  border: 1px solid color-mix(in oklab, var(--error) 30%, transparent);
+  border-radius: var(--r-md);
 }
 .spacer {
   flex: 1;
@@ -122,135 +233,225 @@ button:disabled {
   padding: 1rem;
 }
 .login form {
-  width: min(22rem, 100%);
+  width: min(21rem, 100%);
   display: grid;
   gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  padding: 1.75rem;
 }
 .login h1 {
-  font-size: 1.35rem;
+  font-size: var(--t-xl);
+  letter-spacing: -0.02em;
   margin: 0;
 }
 .login p {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.75rem;
+  color: var(--muted);
 }
 .login label {
   display: grid;
-  gap: 0.25rem;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-.login input {
-  padding: 0.65rem 0.7rem;
-  border: 1px solid var(--line);
-  background: var(--bg);
+  gap: 0.3rem;
+  font-size: var(--t-sm);
+  color: var(--fg-soft);
+  font-weight: 500;
 }
 .login button {
-  margin-top: 0.5rem;
+  margin-top: 0.75rem;
 }
 
 /* --- chrome --- */
 header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   padding: 0.5rem 0.75rem;
   padding-top: max(0.5rem, env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
+  /* Opaque, not translucent: a listing scrolling under a blurred bar looks
+     smart in a screenshot and makes filenames unreadable in use. */
   background: var(--bg);
-  z-index: 2;
+  z-index: 20;
 }
 .who {
   white-space: nowrap;
+  color: var(--fg-soft);
 }
-@media (max-width: 34rem) {
+/* The header has five controls plus the path. Below this the labels go and the
+   icons stay -- which is why every one of those buttons carries an icon and an
+   aria-label, and not just text. */
+@media (max-width: 52rem) {
+  header .ghost .label {
+    display: none;
+  }
+  header .ghost {
+    padding: 0.5rem;
+  }
+}
+@media (max-width: 40rem) {
   .who {
     display: none;
+  }
+}
+/* On a phone the path gets its own line. Sharing one with five controls left it
+   about two characters wide, and the path is the thing that says where you
+   are -- it loses that argument to nothing else in the header. */
+@media (max-width: 34rem) {
+  header {
+    flex-wrap: wrap;
+    row-gap: 0.35rem;
+  }
+  .crumbs {
+    order: 10;
+    flex-basis: 100%;
   }
 }
 
 .crumbs {
   display: flex;
   align-items: center;
-  gap: 0.15rem;
+  gap: 0.1rem;
   overflow-x: auto;
   white-space: nowrap;
+  /* The scrollbar would sit on top of the crumbs on a phone. */
+  scrollbar-width: none;
+  min-width: 0;
+}
+.crumbs::-webkit-scrollbar {
+  display: none;
 }
 .crumbs .crumb {
   display: inline-flex;
   align-items: center;
-  gap: 0.15rem;
+  gap: 0.1rem;
+}
+/* The crumbs scroll; they do not compress. Without this a crowded header
+   squeezed "내 폴더" down to "내". */
+.crumbs > * {
+  flex: none;
 }
 .crumbs button {
   background: none;
-  color: var(--fg);
+  color: var(--fg-soft);
   border: 0;
-  padding: 0.3rem 0.35rem;
+  box-shadow: none;
+  font-weight: 400;
+  padding: 0.25rem 0.4rem;
   min-height: 0;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 }
-.crumbs button:hover {
+.crumbs button:hover:not(:disabled) {
   background: var(--hover);
+  color: var(--fg);
 }
 .crumbs .sep {
-  color: var(--muted);
+  color: var(--line-strong);
+  display: inline-flex;
 }
 .crumbs .current {
   font-weight: 600;
+  color: var(--fg);
+  padding: 0.25rem 0.4rem;
 }
 
 .toolbar {
   display: flex;
   gap: 0.5rem;
-  padding: 0.75rem;
+  padding: 0.85rem 0.9rem;
   flex-wrap: wrap;
 }
 
+/* Capped, because a filename does not get more readable at 1400px -- it just
+   moves its size and date to the far side of the screen, where the eye has to
+   travel the width of the monitor to pair them with the name. */
 .browser {
   min-height: 60vh;
+  max-width: 64rem;
+  margin: 0 auto;
 }
 .drop-hint {
-  margin: 0 0.75rem;
-  padding: 1.5rem;
+  margin: 0 0.9rem;
+  padding: 1.75rem;
   text-align: center;
   border: 2px dashed var(--accent);
-  border-radius: var(--radius);
+  border-radius: var(--r-lg);
+  background: var(--accent-soft);
   color: var(--accent);
+  font-weight: 500;
 }
 
 .progress {
-  margin: 0 0.75rem 0.5rem;
+  margin: 0 0.9rem 0.5rem;
   display: flex;
   align-items: center;
   gap: 0.6rem;
 }
-.progress .bar {
-  height: 6px;
-  background: var(--accent);
-  border-radius: 3px;
-  transition: width 0.15s;
+.progress .track {
   flex: 1;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.progress .bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-full);
+  transition: width 0.15s;
 }
 
 /* --- rows --- */
 main {
-  padding: 0 0.25rem 4rem;
+  padding: 0 0.4rem;
+  padding-bottom: max(4rem, env(safe-area-inset-bottom));
 }
+/* The two destinations, given the weight of a choice rather than of a list.
+   This is the first screen after signing in and it holds exactly two things. */
 .start {
-  padding-top: 0.5rem;
+  padding: 1rem 0.5rem;
+  max-width: 32rem;
+  margin: 0 auto;
+  display: grid;
+  gap: 0.5rem;
+}
+.start .row {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  padding: 1rem;
+  font-size: var(--t-lg);
+  font-weight: 500;
+}
+.start .row .icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.start .row .go {
+  color: var(--muted);
+}
+.start .row:hover {
+  background: var(--hover);
+  border-color: var(--line-strong);
 }
 .row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.6rem 0.5rem;
-  border-radius: var(--radius);
+  padding: 0.55rem 0.6rem;
+  border-radius: var(--r-md);
   cursor: pointer;
   width: 100%;
   background: none;
   border: 0;
+  box-shadow: none;
   color: inherit;
+  font-weight: 400;
   text-align: left;
   min-height: 0;
 }
@@ -258,10 +459,41 @@ main {
   background: var(--hover);
 }
 .row .icon {
-  font-size: 1.35rem;
-  width: 1.6rem;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
   flex: none;
+  color: var(--ico-file);
+}
+/* The tone is on the wrapper rather than the svg so a row can dim the whole
+   thing at once (see .row.pending below). */
+.row .icon[data-kind='folder'] {
+  color: var(--ico-folder);
+}
+.row .icon[data-kind='image'] {
+  color: var(--ico-image);
+}
+.row .icon[data-kind='video'] {
+  color: var(--ico-video);
+}
+.row .icon[data-kind='audio'] {
+  color: var(--ico-audio);
+}
+.row .icon[data-kind='pdf'] {
+  color: var(--ico-pdf);
+}
+.row .icon[data-kind='archive'] {
+  color: var(--ico-archive);
+}
+.row .icon[data-kind='sheet'] {
+  color: var(--ico-sheet);
+}
+.row .icon[data-kind='doc'] {
+  color: var(--ico-doc);
+}
+.row .icon[data-kind='trash'] {
+  color: var(--muted);
 }
 .row .name {
   flex: 1;
@@ -270,80 +502,252 @@ main {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Fixed widths so the columns line up DOWN the list. Left to shrink-wrap, every
+   row put its size and date in a different place and the eye had to re-find
+   them on each line. */
 .row .meta {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
   flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.row .meta.size {
+  width: 5rem;
+  text-align: right;
+}
+.row .meta.date {
+  width: 8.5rem;
+  text-align: right;
 }
 .row .actions {
   display: flex;
-  gap: 0.25rem;
+  gap: 0.15rem;
   flex: none;
+  width: 2rem;
+  justify-content: flex-end;
 }
-.row .actions button {
-  background: none;
-  border: 0;
-  color: var(--muted);
-  padding: 0.35rem;
-  min-height: 0;
-  font-size: 1rem;
-  border-radius: 4px;
+/* Revealed on hover on a pointer device, always there on a touch one -- where
+   there is no hover and a hidden control is simply gone. */
+@media (hover: hover) and (pointer: fine) {
+  .row .actions .reveal {
+    opacity: 0;
+  }
+  .row:hover .actions .reveal,
+  .row:focus-within .actions .reveal,
+  .row .actions .reveal[data-state='open'] {
+    opacity: 1;
+  }
 }
-.row .actions button:hover {
-  background: var(--line);
-  color: var(--fg);
+
+/* Transparent to layout, so the two metas are columns of the row like the name
+   and the icon are. It exists only for the narrow case below. */
+.metas {
+  display: contents;
 }
-@media (max-width: 30rem) {
+
+@media (max-width: 46rem) {
+  .row .meta.date {
+    width: 6.5rem;
+  }
+}
+/* Narrow: the size and date go UNDER the name rather than competing with it for
+   the same line. They used to vanish entirely below 30rem, and the date is
+   often the thing being looked for. */
+@media (max-width: 34rem) {
+  .row {
+    display: grid;
+    grid-template-columns: 1.5rem minmax(0, 1fr) 1.75rem;
+    grid-template-areas:
+      'icon name actions'
+      '.    meta actions';
+    column-gap: 0.75rem;
+    row-gap: 0.05rem;
+    align-items: center;
+  }
+  .row .icon {
+    grid-area: icon;
+  }
+  .row .name {
+    grid-area: name;
+  }
+  .row .actions {
+    grid-area: actions;
+    width: auto;
+  }
+  .metas {
+    grid-area: meta;
+    display: flex;
+    gap: 0.35rem;
+    align-items: baseline;
+    min-width: 0;
+  }
   .row .meta {
-    display: none;
+    width: auto;
+    text-align: left;
+  }
+  .row .meta.size:not(:empty)::after {
+    content: '·';
+    margin-left: 0.35rem;
+    color: var(--line-strong);
   }
 }
 
 .empty {
-  padding: 3rem 1rem;
+  padding: 3.5rem 1rem;
   text-align: center;
   color: var(--muted);
+}
+
+/* Skeletons, not "불러오는 중…": the list keeps its shape while it loads, so
+   nothing jumps when the rows arrive. */
+.skeleton {
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  position: relative;
+  overflow: hidden;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--hover), transparent);
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.skeleton-row {
+  cursor: default;
+}
+.skeleton-row:hover {
+  background: none;
+}
+.skeleton-row .icon .skeleton {
+  display: block;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: var(--r-sm);
+}
+.skeleton-row .name .skeleton {
+  display: block;
+  height: 0.8rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* --- dropdown menu (Radix, unstyled -- these are our own tokens) --- */
+.menu {
+  min-width: 11rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  padding: 0.25rem;
+  z-index: 60;
+  animation: menu-in 0.12s ease-out;
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--r-sm);
+  font-size: 0.9375rem;
+  color: var(--fg);
+  cursor: pointer;
+  user-select: none;
+  /* Radix drives highlight from the keyboard as well as the pointer, so the
+     styling hangs off its attribute rather than :hover. */
+  outline: none;
+}
+.menu-item[data-highlighted] {
+  background: var(--hover);
+}
+.menu-item[data-disabled] {
+  color: var(--muted);
+  pointer-events: none;
+}
+.menu-item .ico {
+  color: var(--muted);
+}
+.menu-item[data-highlighted] .ico {
+  color: inherit;
+}
+.menu-item.danger {
+  color: var(--error);
+}
+.menu-item.danger[data-highlighted] {
+  background: var(--error-soft);
+}
+.menu-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 0.25rem -0.25rem;
+}
+.menu-label {
+  padding: 0.4rem 0.6rem 0.25rem;
+  font-size: var(--t-xs);
+  color: var(--muted);
+  font-weight: 500;
 }
 
 /* --- dialogs --- */
 dialog {
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
+  border-radius: var(--r-lg);
+  background: var(--surface);
   color: var(--fg);
-  padding: 1.1rem;
+  box-shadow: var(--shadow-lg);
+  padding: 1.35rem;
   width: min(30rem, calc(100vw - 2rem));
 }
 dialog::backdrop {
-  background: rgb(0 0 0 / 40%);
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(2px);
 }
 dialog h2 {
   margin: 0 0 0.35rem;
-  font-size: 1.05rem;
+  font-size: var(--t-lg);
+  letter-spacing: -0.01em;
 }
 dialog label {
   display: grid;
-  gap: 0.25rem;
-  margin: 0.75rem 0;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-dialog input,
-dialog select {
-  padding: 0.55rem 0.6rem;
-  border: 1px solid var(--line);
-  background: var(--bg);
+  gap: 0.3rem;
+  margin: 0.85rem 0;
+  font-size: var(--t-sm);
+  color: var(--fg-soft);
+  font-weight: 500;
 }
 dialog menu {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0;
-  margin: 1rem 0 0;
+  margin: 1.25rem 0 0;
 }
 
 .share-item {
-  padding: 0.6rem 0;
+  padding: 0.75rem 0;
   border-top: 1px solid var(--line);
 }
 .share-item:first-of-type {
@@ -353,35 +757,52 @@ dialog menu {
   display: flex;
   gap: 0.4rem;
   align-items: center;
-  margin-top: 0.3rem;
+  margin-top: 0.4rem;
 }
 .share-url input {
   flex: 1;
   min-width: 0;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  font-size: 0.85rem;
+  padding: 0.4rem 0.55rem;
+  font-size: var(--t-sm);
+  background: var(--surface-2);
 }
 .share-url button {
   min-height: 0;
-  padding: 0.4rem 0.6rem;
-  font-size: 0.85rem;
+  padding: 0.45rem 0.6rem;
+  font-size: var(--t-sm);
 }
 
 /* --- operator page --- */
 .admin {
-  padding: 1rem;
-  max-width: 60rem;
+  padding: 1.25rem 1rem;
+  max-width: 62rem;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1rem;
+}
+/* Cards. Six bare <section>s in a column read as one long undifferentiated
+   page; the panel is the unit an operator actually looks at. */
+.admin section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1.1rem 1.15rem;
 }
 .admin h2 {
-  font-size: 0.95rem;
+  /* Was 0.95rem against a 1rem body -- the heading was SMALLER than the text
+     under it, which is why the page had no hierarchy to read. */
+  font-size: var(--t-lg);
   font-weight: 600;
-  margin: 0 0 0.5rem;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.admin h2 .ico {
+  color: var(--muted);
 }
 .admin section > p {
   margin: 0.35rem 0;
@@ -394,22 +815,24 @@ dialog menu {
 }
 .warn {
   color: var(--warn);
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
   margin: 0.35rem 0;
 }
 
 /* A single bar rather than a donut: the only question is how close to full it
    is, and a bar answers that at a glance from across a room. */
 .meter {
-  height: 0.6rem;
-  border-radius: var(--radius);
-  background: var(--hover);
+  height: 0.55rem;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
   overflow: hidden;
   border: 1px solid var(--line);
 }
 .meter .fill {
   height: 100%;
   background: var(--accent);
+  border-radius: var(--r-full);
+  transition: width 0.3s ease;
 }
 .meter .fill.warn-fill {
   background: var(--warn);
@@ -421,19 +844,28 @@ dialog menu {
 .admin-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 .admin-table th,
 .admin-table td {
   text-align: left;
-  padding: 0.4rem 0.5rem;
+  padding: 0.5rem 0.55rem;
   border-bottom: 1px solid var(--line);
   vertical-align: baseline;
+}
+.admin-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.admin-table tbody tr:hover td {
+  background: var(--surface-2);
 }
 .admin-table th {
   color: var(--muted);
   font-weight: 500;
-  font-size: 0.8rem;
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom-color: var(--line-strong);
 }
 .admin-table .num {
   text-align: right;
@@ -445,6 +877,9 @@ dialog menu {
 }
 .admin-table .actions button {
   margin-left: 0.25rem;
+  min-height: 0;
+  padding: 0.3rem 0.55rem;
+  font-size: var(--t-sm);
 }
 .admin-table button:disabled {
   opacity: 0.4;
@@ -454,19 +889,24 @@ dialog menu {
 .findings {
   margin: 0.35rem 0;
   padding-left: 1.1rem;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 .findings li {
   margin: 0.2rem 0;
 }
 
 /* The table is the thing worth scrolling on a phone; the page is not. */
-@media (max-width: 40rem) {
+@media (max-width: 44rem) {
   .admin {
-    padding: 0.75rem;
+    padding: 0.75rem 0.6rem;
   }
   .admin section {
+    padding: 0.9rem;
+  }
+  .admin .scroller {
     overflow-x: auto;
+    margin: 0 -0.9rem;
+    padding: 0 0.9rem;
   }
   .admin-table {
     min-width: 34rem;
@@ -475,16 +915,21 @@ dialog menu {
 
 /* --- team membership --- */
 .team {
-  margin: 0 0 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line);
+}
+.team:first-of-type {
+  border-top: 0;
+  padding-top: 0;
 }
 .team h3 {
-  font-size: 0.9rem;
+  font-size: 0.9375rem;
   font-weight: 600;
-  margin: 0 0 0.2rem;
+  margin: 0 0 0.35rem;
 }
 .members {
   list-style: none;
-  margin: 0.2rem 0;
+  margin: 0.3rem 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
@@ -493,53 +938,59 @@ dialog menu {
 .members li {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.25rem;
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.15rem 0.2rem 0.15rem 0.5rem;
-  font-size: 0.85rem;
+  border-radius: var(--r-full);
+  padding: 0.15rem 0.25rem 0.15rem 0.65rem;
+  font-size: var(--t-sm);
 }
 /* A member with no remove button (the caller cannot manage this team) should
    not keep the padding that made room for one. */
 .members li.muted {
   border: none;
+  background: none;
   padding: 0.15rem 0;
 }
+.members li button {
+  min-height: 0;
+  padding: 0.15rem;
+  border-radius: var(--r-full);
+  background: none;
+  border: 0;
+  box-shadow: none;
+  color: var(--muted);
+}
+.members li button:hover:not(:disabled) {
+  background: var(--error-soft);
+  color: var(--error);
+}
 .tiny {
-  font-size: 0.75rem;
-  padding: 0.1rem 0.35rem;
+  font-size: var(--t-xs);
+  padding: 0.15rem 0.4rem;
+  min-height: 0;
 }
 .add-member {
   display: flex;
   gap: 0.35rem;
-  margin-top: 0.35rem;
+  margin-top: 0.5rem;
 }
 .add-member select {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.15rem 0.3rem;
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  font-size: var(--t-sm);
+  padding: 0.3rem 0.4rem;
 }
 
 /* --- activity --- */
 .filters {
   display: flex;
-  gap: 0.35rem;
-  margin: 0.35rem 0;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.75rem;
   flex-wrap: wrap;
 }
 .filters input,
 .filters select {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.2rem 0.4rem;
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  font-size: var(--t-sm);
+  padding: 0.35rem 0.5rem;
 }
 .filters input {
   min-width: 9rem;
@@ -551,5 +1002,37 @@ dialog menu {
    rather than letting one long name push the table sideways. */
 .admin-table .path {
   word-break: break-all;
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
+}
+
+/* --- theme switch --- */
+/* Three states need three targets. A single button that cycles through them
+     system -> light -> dark -> system
+   makes the current one unguessable and the desired one up to two clicks away
+   with no way to see which. */
+.seg {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  padding: 2px;
+  gap: 2px;
+}
+.seg button {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  color: var(--muted);
+  padding: 0.3rem 0.5rem;
+  min-height: 0;
+  border-radius: var(--r-full);
+}
+.seg button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+.seg button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm);
 }

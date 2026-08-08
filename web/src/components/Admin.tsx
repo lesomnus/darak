@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import { formatDate, formatSize } from '../lib/format'
+import { Icon } from './Icon'
 import type {
   ActivityEvent,
   ActivityReport,
@@ -94,6 +95,7 @@ export function Admin({
       {isAdmin && (
       <section>
         <h2>
+          <Icon name="team" size={18} />
           사용자 <span className="muted small">{inv ? `${inv.users.length}명` : ''}</span>
         </h2>
         {inv?.source === 'nss' && (
@@ -108,30 +110,33 @@ export function Admin({
             {w}
           </p>
         ))}
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>이름</th>
-              <th className="num">uid</th>
-              <th>팀</th>
-              <th className="num">사용량</th>
-              <th>SMB</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {inv?.users.map((u) => (
-              <UserRow
-                key={u.name}
-                user={u}
-                self={u.name === me}
-                busy={busy === u.name}
-                onToggle={(enabled) => void setSmb(u.name, enabled)}
-                onReset={() => setResetting(u.name)}
-              />
-            ))}
-          </tbody>
-        </table>
+        {/* The table scrolls sideways on a phone; the page does not. */}
+        <div className="scroller">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>이름</th>
+                <th className="num">uid</th>
+                <th>팀</th>
+                <th className="num">사용량</th>
+                <th>SMB</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {inv?.users.map((u) => (
+                <UserRow
+                  key={u.name}
+                  user={u}
+                  self={u.name === me}
+                  busy={busy === u.name}
+                  onToggle={(enabled) => void setSmb(u.name, enabled)}
+                  onReset={() => setResetting(u.name)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
         <p className="muted small">
           계정 생성·삭제와 uid는 여기서 하지 않습니다. <code>roster.yaml</code>을 고치고 커밋한 뒤
           재시작하면 반영됩니다 — 누구에게 어떤 uid를 줬는지의 기록이 곧 그 파일의 git 이력입니다.
@@ -227,7 +232,10 @@ function Capacity({ disk }: { disk: DiskReport | null }) {
 
   return (
     <section>
-      <h2>저장 공간</h2>
+      <h2>
+        <Icon name="disk" size={18} />
+        저장 공간
+      </h2>
       <div className="meter" role="img" aria-label={`${Math.round(used * 100)}% 사용 중`}>
         <div className={barClass(used)} style={{ width: `${Math.min(used, 1) * 100}%` }} />
       </div>
@@ -277,14 +285,20 @@ function Drift({ drift }: { drift: DriftReport | null }) {
   if (drift.ok) {
     return (
       <section>
-        <h2>선언 대조</h2>
+        <h2>
+          <Icon name="check" size={18} />
+          선언 대조
+        </h2>
         <p className="ok">roster.yaml과 실제 시스템이 일치합니다.</p>
       </section>
     )
   }
   return (
     <section>
-      <h2>선언 대조</h2>
+      <h2>
+        <Icon name="shield" size={18} />
+        선언 대조
+      </h2>
       {drift.error && (
         <p className="warn">
           usersync가 대조에 실패했습니다. roster와 시스템이 어긋났는지 알 수 없는 상태입니다.
@@ -361,7 +375,9 @@ function Teams({
 
   return (
     <section>
-      <h2>팀</h2>
+      <h2>
+        <Icon name="team" size={18} />팀
+      </h2>
       {view.teams.map((g) => {
         const outside = view.users.filter((u) => !g.members.includes(u))
         return (
@@ -578,6 +594,7 @@ function Activity({ onError }: { onError: (message: string) => void }) {
   return (
     <section>
       <h2>
+        <Icon name="clock" size={18} />
         활동 <span className="muted small">최근 30일</span>
       </h2>
 
@@ -611,36 +628,38 @@ function Activity({ onError }: { onError: (message: string) => void }) {
       )}
 
       {report && report.events.length > 0 && (
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>시각</th>
-              <th>사용자</th>
-              <th>동작</th>
-              <th>경로</th>
-              <th>경로(from)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {report.events.map((e, i) => (
-              <tr key={`${e.at}-${e.path}-${i}`}>
-                <td className="muted small nowrap">{formatDate(e.at)}</td>
-                <td>
-                  {e.user}
-                  <span className="muted small" title={e.from ? `from ${e.from}` : undefined}>
-                    {' '}
-                    {e.source === 'smb' ? 'SMB' : '웹'}
-                  </span>
-                </td>
-                <td>
-                  <span className={actionClass(e.action)}>{actionLabel(e.action)}</span>
-                </td>
-                <td className="path">{e.to ?? e.path}</td>
-                <td className="path muted small">{e.to ? e.path : ''}</td>
+        <div className="scroller">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>시각</th>
+                <th>사용자</th>
+                <th>동작</th>
+                <th>경로</th>
+                <th>경로(from)</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {report.events.map((e, i) => (
+                <tr key={`${e.at}-${e.path}-${i}`}>
+                  <td className="muted small nowrap">{formatDate(e.at)}</td>
+                  <td>
+                    {e.user}
+                    <span className="muted small" title={e.from ? `from ${e.from}` : undefined}>
+                      {' '}
+                      {e.source === 'smb' ? 'SMB' : '웹'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={actionClass(e.action)}>{actionLabel(e.action)}</span>
+                  </td>
+                  <td className="path">{e.to ?? e.path}</td>
+                  <td className="path muted small">{e.to ? e.path : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <p className="muted small">

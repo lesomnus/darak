@@ -1,3 +1,4 @@
+import type { IconName } from '../components/Icon'
 import type { Entry } from '../types'
 
 export function formatSize(bytes: number): string {
@@ -34,18 +35,23 @@ const ARCHIVE = ['zip', 'tar', 'gz', 'tgz', '7z', 'rar']
 const SHEET = ['xlsx', 'xls', 'csv']
 const DOC = ['docx', 'doc', 'hwp', 'hwpx', 'txt', 'md', 'rtf']
 
-/** A glyph rather than an icon set: nothing to load, and it survives a font. */
-export function iconFor(entry: Entry): string {
-  if (entry.dir) return entry.name === '.trash' ? '🗑️' : '📁'
+/**
+ * Which icon an entry gets, and with it which tone: the categories below are
+ * the reason a listing can be skimmed rather than read. The extension is the
+ * only signal available -- the server does not sniff content, and asking it to
+ * would mean opening every file in a listing.
+ */
+export function iconFor(entry: Entry): IconName {
+  if (entry.dir) return entry.name === TRASH_DIR ? 'trash' : 'folder'
   const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
-  if (IMAGE.includes(ext)) return '🖼️'
-  if (VIDEO.includes(ext)) return '🎬'
-  if (AUDIO.includes(ext)) return '🎵'
-  if (ext === 'pdf') return '📕'
-  if (ARCHIVE.includes(ext)) return '🗜️'
-  if (SHEET.includes(ext)) return '📊'
-  if (DOC.includes(ext)) return '📄'
-  return '📄'
+  if (IMAGE.includes(ext)) return 'image'
+  if (VIDEO.includes(ext)) return 'video'
+  if (AUDIO.includes(ext)) return 'audio'
+  if (ext === 'pdf') return 'pdf'
+  if (ARCHIVE.includes(ext)) return 'archive'
+  if (SHEET.includes(ext)) return 'sheet'
+  if (DOC.includes(ext)) return 'doc'
+  return 'file'
 }
 
 /**
