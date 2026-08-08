@@ -16,7 +16,7 @@
 #
 # Replace this with a tag the moment usersync publishes one. Pinning an image to
 # a commit on an unmerged branch is a thing to fix, not a thing to keep.
-ARG USERSYNC_VERSION=004a6bd6ac5a945fe3d670cc93abd7ca19a40bf8
+ARG USERSYNC_VERSION=2e96cb143269436bc28e901be016dd8ebe50db92
 
 FROM golang:1.26-trixie AS build
 WORKDIR /src

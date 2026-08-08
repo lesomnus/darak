@@ -12,21 +12,17 @@ docker compose up -d --build
 
 ---
 
-## ⚠️ 지금 막혀 있는 것
+## usersync 버전 고정
 
-**usersync가 아직 설치 가능한 형태로 게시되지 않았습니다.**
-
-- GitHub의 `lesomnus/usersync` **기본 브랜치는 템플릿 스캐폴딩**입니다(`df3cc57 Initial commit`). 모듈 경로조차 `github.com/lesomnus/go-app`으로 선언돼 있어 `go install ...@latest`가 아예 실패합니다.
-- 실제 코드가 있는 로컬 `main`은 **push된 적이 없습니다.**
-- 유일하게 push된 실코드는 `feat/ad-roadmap` 브랜치인데, `go install`은 슬래시가 든 버전 문자열을 거부하므로 브랜치명으로 지정할 수 없습니다.
-
-그래서 이미지가 **커밋 해시**로 고정돼 있습니다:
+usersync는 아직 태그된 릴리즈가 없어서 **커밋 해시**로 고정합니다:
 
 ```
-USERSYNC_VERSION=004a6bd6ac5a945fe3d670cc93abd7ca19a40bf8
+USERSYNC_VERSION=2e96cb143269436bc28e901be016dd8ebe50db92
 ```
 
-**해야 할 일:** usersync의 `main`을 push하고 태그를 붙인 뒤, `.env`와 `Dockerfile`의 기본값을 그 태그로 바꾸세요. 미병합 브랜치의 커밋에 고정된 이미지는 고쳐야 할 상태이지 유지할 상태가 아닙니다.
+`lesomnus/usersync`의 `main` HEAD입니다. 올릴 때는 그 저장소에서 `git rev-parse HEAD`를
+읽어 `.env`에 넣으세요. 릴리즈 태그가 생기면 태그로 바꾸는 편이 낫습니다 — 해시는
+브랜치가 움직여도 유효하지만, 무엇이 들어있는지는 말해주지 않습니다.
 
 ---
 

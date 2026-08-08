@@ -55,10 +55,25 @@ cd "$CONFIG_DIR"
 # be a refusal to start, not a half-applied set of accounts.
 usersync validate
 
-# Show what will change before it changes. On a healthy restart this is empty,
-# which makes the one time it is not worth reading.
-usersync plan || die "usersync refused the roster; nothing has been changed"
-usersync apply
+# `mode: audit` means a directory service owns the accounts now, and usersync
+# refuses to create any. Running apply anyway would fail the boot on the exact
+# day of the cutover — so read the mode rather than assuming this container is
+# still the thing that makes accounts.
+mode=$(usersync config 2>/dev/null | sed -n 's/^mode:[[:space:]]*//p' | tr -d '"' | head -1)
+case "${mode:-manage}" in
+audit)
+	log "mode: audit — a directory owns the accounts; verifying instead of applying"
+	# A disagreement is worth shouting about but not worth refusing to serve
+	# over: the files are still there and still owned by the right numbers.
+	usersync audit || echo "WARNING: the directory and the roster disagree; see above" >&2
+	;;
+*)
+	# Show what will change before it changes. On a healthy restart this is
+	# empty, which makes the one time it is not worth reading.
+	usersync plan || die "usersync refused the roster; nothing has been changed"
+	usersync apply
+	;;
+esac
 
 # --- layout -----------------------------------------------------------------
 
