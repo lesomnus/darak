@@ -1,0 +1,17 @@
+# Image for the integration tests. They need real, separate unix users, which
+# needs root, which is why they do not run on a developer's machine.
+#
+# Built from a tar on stdin so it works against a remote or sidecar docker
+# daemon with no bind mounts:
+#
+#   tar -c --exclude=.git . | docker build -f Dockerfile.test -t darak-test -
+#   docker run --rm darak-test
+FROM golang:1.26-trixie
+
+WORKDIR /src
+COPY . .
+
+RUN go build -trimpath -o /usr/local/bin/darak-helper ./cmd/darak-helper \
+	&& chmod 0755 /usr/local/bin/darak-helper
+
+CMD ["go", "test", "-tags", "integration", "-count", "1", "-v", "./internal/integration/"]
