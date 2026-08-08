@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lesomnus/darak/internal/activity"
 	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
 	"github.com/lesomnus/darak/internal/share"
@@ -37,6 +38,11 @@ type Config struct {
 	// -- the same answer a non-admin gets, so a deployment without it is
 	// indistinguishable from one where nobody qualifies.
 	Admin *admin.Admin
+
+	// Activity is the who-changed-what record. Nil reports the feature as off
+	// rather than 404, because unlike the admin surface there is nothing to
+	// conceal: the caller is already an administrator.
+	Activity *activity.Store
 
 	// UI, if set, is served at / for anything that is not an API route.
 	UI http.Handler
@@ -98,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/users", s.authed(s.adminOnly(s.handleAdminUsers)))
 	mux.HandleFunc("GET /api/admin/disk", s.authed(s.adminOnly(s.handleAdminDisk)))
 	mux.HandleFunc("GET /api/admin/audit", s.authed(s.adminOnly(s.handleAdminAudit)))
+	mux.HandleFunc("GET /api/admin/activity", s.authed(s.adminOnly(s.handleActivity)))
 	mux.HandleFunc("POST /api/admin/users/", s.authed(s.adminOnly(s.handleAdminUserOp)))
 
 	// Team ownership is a separate axis from the admin group: an owner may

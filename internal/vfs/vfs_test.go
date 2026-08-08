@@ -468,3 +468,38 @@ func TestTrashDirectoryModeFollowsTheDomain(t *testing.T) {
 		}
 	}
 }
+
+// The trash directory is this package's bookkeeping on the way to a delete.
+// Recording its creation would put a `.trash` entry above every first deletion
+// in a folder, attributed to whoever happened to delete something first.
+func TestTrashCreationIsNotRecorded(t *testing.T) {
+	fs, _ := newFS(t)
+	ctx := context.Background()
+
+	var recorded []string
+	fs.Record = func(user, action, p, to string) {
+		recorded = append(recorded, action+" "+p)
+	}
+
+	if err := fs.Write(ctx, "alice", "homes/alice/doc.txt", strings.NewReader("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Remove(ctx, "alice", "homes/alice/doc.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, r := range recorded {
+		if strings.Contains(r, TrashDir) {
+			t.Errorf("the trash directory was recorded: %q (all: %v)", r, recorded)
+		}
+	}
+	// The delete itself IS recorded, and as a delete rather than the rename it
+	// physically is: what the person did was delete the file.
+	want := map[string]bool{"write homes/alice/doc.txt": true, "delete homes/alice/doc.txt": true}
+	for _, r := range recorded {
+		delete(want, r)
+	}
+	if len(want) != 0 {
+		t.Errorf("recorded = %v, missing %v", recorded, want)
+	}
+}

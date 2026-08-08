@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/lesomnus/darak/internal/activity"
 	"github.com/lesomnus/darak/internal/admin"
 )
 
@@ -217,4 +220,41 @@ func (s *Server) handleTeamMembers(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// --- activity ---
+
+// handleActivity answers "who touched this file".
+//
+// Admin-gated. The record names who did what, and the people it names have no
+// business reading it — a shared team folder would otherwise let anyone see
+// every colleague's working pattern.
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Activity == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"events": []any{}, "enabled": false})
+		return
+	}
+	q := r.URL.Query()
+	query := activity.Query{
+		User:   q.Get("user"),
+		Path:   q.Get("path"),
+		Action: activity.Action(q.Get("action")),
+	}
+	if v := q.Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			query.Since = time.Now().AddDate(0, 0, -n)
+		}
+	}
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			query.Limit = n
+		}
+	}
+
+	events, err := s.cfg.Activity.Query(query)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "could not read the activity log: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "enabled": true})
 }

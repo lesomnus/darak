@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import { formatDate, formatSize } from '../lib/format'
-import type { AdminUser, DiskReport, DriftReport, Inventory, TeamsView } from '../types'
+import type {
+  ActivityEvent,
+  ActivityReport,
+  AdminUser,
+  DiskReport,
+  DriftReport,
+  Inventory,
+  TeamsView,
+} from '../types'
 
 /**
  * The operator page.
@@ -80,6 +88,8 @@ export function Admin({
       <Drift drift={drift} />
 
       <Teams view={teams} onChanged={() => load()} onError={onError} />
+
+      {isAdmin && <Activity onError={onError} />}
 
       {isAdmin && (
       <section>
@@ -509,4 +519,156 @@ function PasswordDialog({
       </form>
     </div>
   )
+}
+
+/**
+ * Who changed what.
+ *
+ * Two sources, and the column says which: SMB (including a mounted share — a
+ * cifs mount is still SMB underneath) and the web interface. Worth showing,
+ * because "it wasn't me, I only use the web page" is a real thing people say
+ * and the two paths are separately explainable.
+ *
+ * The window is rolling. Permanent retention is a backup's job, and the store
+ * is dated JSONL files precisely so that copying the directory is the whole of
+ * it — the page says so rather than implying it remembers everything.
+ */
+function Activity({ onError }: { onError: (message: string) => void }) {
+  const [report, setReport] = useState<ActivityReport | null>(null)
+  const [filter, setFilter] = useState<{ user: string; path: string; action: string }>({
+    user: '',
+    path: '',
+    action: '',
+  })
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(
+    (f: typeof filter, signal?: AbortSignal) => {
+      setLoading(true)
+      api
+        .adminActivity({ ...f, days: 30 }, signal)
+        .then(setReport)
+        .catch((e) => {
+          if (signal?.aborted) return
+          onError(e instanceof Error ? e.message : '읽을 수 없습니다.')
+        })
+        .finally(() => setLoading(false))
+    },
+    [onError],
+  )
+
+  useEffect(() => {
+    const ac = new AbortController()
+    load(filter, ac.signal)
+    return () => ac.abort()
+    // Refetch on filter changes only; `load` is stable.
+  }, [load, filter])
+
+  if (report && !report.enabled) {
+    return (
+      <section>
+        <h2>활동</h2>
+        <p className="muted small">
+          기록이 꺼져 있습니다(<code>-activity</code>가 비어 있음).
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <section>
+      <h2>
+        활동 <span className="muted small">최근 30일</span>
+      </h2>
+
+      <div className="filters">
+        <input
+          placeholder="사용자"
+          value={filter.user}
+          onChange={(e) => setFilter({ ...filter, user: e.target.value })}
+        />
+        <input
+          placeholder="경로 일부"
+          value={filter.path}
+          onChange={(e) => setFilter({ ...filter, path: e.target.value })}
+        />
+        <select
+          value={filter.action}
+          onChange={(e) => setFilter({ ...filter, action: e.target.value })}
+          aria-label="동작"
+        >
+          <option value="">전체</option>
+          <option value="delete">삭제</option>
+          <option value="rename">이름변경</option>
+          <option value="create">생성</option>
+          <option value="write">쓰기</option>
+          <option value="mkdir">폴더 생성</option>
+        </select>
+      </div>
+
+      {report && report.events.length === 0 && (
+        <p className="muted small">{loading ? '읽는 중…' : '해당하는 기록이 없습니다.'}</p>
+      )}
+
+      {report && report.events.length > 0 && (
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>시각</th>
+              <th>사용자</th>
+              <th>동작</th>
+              <th>경로</th>
+              <th>경로(from)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.events.map((e, i) => (
+              <tr key={`${e.at}-${e.path}-${i}`}>
+                <td className="muted small nowrap">{formatDate(e.at)}</td>
+                <td>
+                  {e.user}
+                  <span className="muted small" title={e.from ? `from ${e.from}` : undefined}>
+                    {' '}
+                    {e.source === 'smb' ? 'SMB' : '웹'}
+                  </span>
+                </td>
+                <td>
+                  <span className={actionClass(e.action)}>{actionLabel(e.action)}</span>
+                </td>
+                <td className="path">{e.to ?? e.path}</td>
+                <td className="path muted small">{e.to ? e.path : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <p className="muted small">
+        보관 기간이 지난 기록은 지워집니다. 영구 보관이 필요하면 서버의 활동 디렉터리를 백업하세요 —
+        날짜별 JSONL 파일이라 복사만 하면 됩니다.
+      </p>
+    </section>
+  )
+}
+
+function actionLabel(a: ActivityEvent['action']): string {
+  switch (a) {
+    case 'delete':
+      return '삭제'
+    case 'rename':
+      return '이름변경'
+    case 'create':
+      return '생성'
+    case 'write':
+      return '쓰기'
+    case 'mkdir':
+      return '폴더 생성'
+  }
+}
+
+/** Deletion and rename are the ones people come here looking for. */
+function actionClass(a: ActivityEvent['action']): string {
+  if (a === 'delete') return 'warn-text'
+  if (a === 'rename') return 'muted'
+  return ''
 }

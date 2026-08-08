@@ -84,9 +84,35 @@ if [[ ! -f /etc/samba/smb.conf ]]; then
 		   security = user
 		   passdb backend = tdbsam
 		   map to guest = never
-		   log level = 0
+		   # One file, named, because darak reads it for the audit records.
+		   # `log level = 1` is what makes full_audit emit at all.
+		   log level = 1
+		   log file = /var/log/samba/audit.log
+		   max log size = 5000
 		   disable netbios = yes
 		   smb ports = 445
+		   # --- who changed what -------------------------------------------
+		   #
+		   # full_audit reports the AUTHENTICATED SMB username for every
+		   # operation, including from a mounted share -- a kernel cifs mount is
+		   # still SMB underneath, so `rm` through a mountpoint arrives here the
+		   # same as any other client. That is why this and not the kernel audit
+		   # subsystem, which is not namespaced and which a container cannot
+		   # register with at all.
+		   #
+		   # In [global] so it covers every share, including the ones usersync
+		   # generates in its marker block -- which therefore needs no knowledge
+		   # of any of this.
+		   #
+		   # The operation names are the *at() forms in Samba 4.x. Getting one
+		   # wrong does NOT quietly disable auditing: smb_full_audit_connect
+		   # fails the CONNECT, and the share goes offline. Hence the check
+		   # below, before smbd is ever started.
+		   vfs objects = full_audit
+		   full_audit:prefix = %u|%I|%S
+		   full_audit:success = create_file mkdirat unlinkat renameat
+		   full_audit:failure = none
+		   full_audit:syslog = no
 		   # Everything below the marker is generated from the roster; edit the
 		   # roster, not this file.
 	EOF
@@ -148,6 +174,31 @@ fi
 # replaces anything, with the previous file kept as .bak.
 usersync shares --write
 
+# A wrong operation name in full_audit:success does not degrade to "no
+# auditing" -- it makes every share REFUSE TO CONNECT, and testparm does not
+# catch it (verified: a config naming `mkdir` passes testparm and then breaks
+# every share). So ask the module itself, before smbd is serving anything.
+#
+# The names live NUL-terminated in the .so, so tr does what strings would
+# without pulling binutils into the image.
+check_audit_ops() {
+	local so missing=()
+	so=$(ls /usr/lib/*/samba/vfs/full_audit.so 2>/dev/null | head -1)
+	if [[ -z $so ]]; then
+		missing=(full_audit.so)
+	else
+		for op in create_file mkdirat unlinkat renameat; do
+			tr '\0' '\n' <"$so" | grep -qx "$op" || missing+=("$op")
+		done
+	fi
+	if ((${#missing[@]})); then
+		echo "WARNING: this Samba does not know: ${missing[*]}" >&2
+		echo "  Removing the audit block rather than serving shares that refuse to connect." >&2
+		echo "  The activity page will show web events only." >&2
+		sed -i '/vfs objects = full_audit/d; /full_audit:/d' /etc/samba/smb.conf
+	fi
+}
+
 start_samba() {
 	winbindd -D
 	smbd -D
@@ -161,6 +212,7 @@ start_samba() {
 	echo "winbindd did not become ready; web logins will fail" >&2
 	return 1
 }
+check_audit_ops
 start_samba
 
 # --- banner -----------------------------------------------------------------

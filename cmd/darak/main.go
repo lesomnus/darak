@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lesomnus/darak/internal/activity"
 	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
 	"github.com/lesomnus/darak/internal/helperpool"
@@ -54,6 +55,9 @@ func realMain() error {
 		allowRemapped = flag.Bool("allow-remapped-uids", false, "start even though uids here are not the numbers on disk (see the error this suppresses)")
 		adminGroup    = flag.String("admin-group", admin.DefaultGroup, "POSIX group whose members may use the operator page; empty disables it")
 		usageInterval = flag.Duration("usage-interval", 30*time.Minute, "how often per-user disk usage is remeasured")
+		activityDir   = flag.String("activity", "/var/lib/darak/activity", "where the who-changed-what record is kept; empty disables it")
+		activityKeep  = flag.Duration("activity-keep", activity.DefaultKeep, "how long to keep activity records (permanent retention is a backup's job)")
+		smbLog        = flag.String("smb-log", "/var/log/samba/audit.log", "smbd's log, read for full_audit records; empty disables the SMB half")
 	)
 	flag.Parse()
 
@@ -121,8 +125,41 @@ func realMain() error {
 		}
 	}
 
+	// The who-changed-what record. Two sources, because there are two ways in
+	// and each already knows the AUTHENTICATED identity: smbd's full_audit for
+	// SMB (including a mounted share, which is still SMB underneath), and
+	// darak's own handlers for the web, which run as the session's user.
+	//
+	// There is no kernel-level option here worth reaching for: the audit
+	// subsystem is not namespaced and a container cannot register with it, and
+	// fanotify needs CAP_SYS_ADMIN and reports a pid rather than a name.
+	var acts *activity.Store
+	if *activityDir != "" {
+		acts, err = activity.NewStore(*activityDir, *activityKeep)
+		if err != nil {
+			return err
+		}
+		defer acts.Close()
+	}
+
+	fs := &vfs.FS{Pool: pool}
+	if acts != nil {
+		fs.Record = func(user, action, p, to string) {
+			e := activity.Event{
+				User: user, Action: activity.Action(action),
+				Path: p, To: to, Source: activity.SourceWeb,
+			}
+			// A failure to write the note must not fail the operation that
+			// already succeeded -- so it is logged, loudly, and dropped.
+			if err := acts.Record(e); err != nil {
+				slog.Warn("could not record activity", "err", err, "user", user, "path", p)
+			}
+		}
+	}
+
 	srv, err := server.New(server.Config{
-		FS:            &vfs.FS{Pool: pool},
+		FS:            fs,
+		Activity:      acts,
 		Shares:        shares,
 		Admin:         adm,
 		UI:            web,
@@ -139,6 +176,11 @@ func realMain() error {
 	defer stop()
 
 	go housekeeping(ctx, pool, srv, shares)
+	if acts != nil && *smbLog != "" {
+		go acts.Tail(ctx.Done(), *smbLog, *root, func(err error) {
+			slog.Warn("could not record an SMB activity event", "err", err)
+		})
+	}
 	if adm != nil {
 		go measureUsage(ctx, adm, *usageInterval)
 	}

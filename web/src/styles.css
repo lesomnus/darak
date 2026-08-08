@@ -523,3 +523,33 @@ dialog menu {
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
+
+/* --- activity --- */
+.filters {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0.35rem 0;
+  flex-wrap: wrap;
+}
+.filters input,
+.filters select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.4rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.filters input {
+  min-width: 9rem;
+}
+.nowrap {
+  white-space: nowrap;
+}
+/* Paths are the widest column and the one worth reading in full; break them
+   rather than letting one long name push the table sideways. */
+.admin-table .path {
+  word-break: break-all;
+  font-size: 0.85rem;
+}

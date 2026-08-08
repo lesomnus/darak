@@ -63,6 +63,25 @@ type FS struct {
 
 	// Now is overridable so trash names are deterministic in tests.
 	Now func() time.Time
+
+	// Record notes a change for the activity log. Nil disables it.
+	//
+	// The web path records itself rather than being observed, because it is the
+	// only place that KNOWS: every operation here runs as the session's user
+	// through the helper, so there is no pid to resolve and no name to infer.
+	// (SMB is the other half, and smbd's full_audit reports it — see
+	// internal/activity.)
+	//
+	// Called only after the operation succeeded. A record of something that did
+	// not happen is worse than no record.
+	Record func(user string, action, p, to string)
+}
+
+// note records a change if recording is enabled.
+func (f *FS) note(user, action, p, to string) {
+	if f.Record != nil {
+		f.Record(user, action, p, to)
+	}
 }
 
 func (f *FS) now() time.Time {
@@ -134,6 +153,16 @@ func (f *FS) ReadDir(ctx context.Context, user, p string, withStat bool) ([]wire
 
 // Mkdir creates a directory with an exact mode.
 func (f *FS) Mkdir(ctx context.Context, user, p string, mode uint32) error {
+	if err := f.mkdir(ctx, user, p, mode); err != nil {
+		return err
+	}
+	f.note(user, "mkdir", p, "")
+	return nil
+}
+
+// mkdir is Mkdir without the activity record, for the directories this package
+// creates on its own account.
+func (f *FS) mkdir(ctx context.Context, user, p string, mode uint32) error {
 	resp, _, err := f.do(ctx, user, &wire.Request{Op: wire.OpMkdir, Path: p, Mode: mode})
 	if err != nil {
 		return err
@@ -282,7 +311,11 @@ func (f *FS) Write(ctx context.Context, user, p string, src io.Reader, mode uint
 
 	// 5. Durability of the name itself. Without this a crash can lose the
 	// directory entry even though the data was synced.
-	return f.syncDir(ctx, user, dir)
+	if err := f.syncDir(ctx, user, dir); err != nil {
+		return err
+	}
+	f.note(user, "write", p, "")
+	return nil
 }
 
 // linkToTrash hard-links the current version of p into its domain's trash.
@@ -341,7 +374,11 @@ func (f *FS) ensureTrash(ctx context.Context, user, domain string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	if err := f.Mkdir(ctx, user, trash, mode); err != nil {
+	// f.mkdir, not f.Mkdir: creating the trash is this package's bookkeeping on
+	// the way to a delete, not something the person did. Recording it would put
+	// a `.trash` entry in the activity log above every first deletion in a
+	// folder, attributed to whoever happened to delete something first.
+	if err := f.mkdir(ctx, user, trash, mode); err != nil {
 		var e *Errno
 		if !errors.As(err, &e) || e.Err != unix.EEXIST {
 			return "", err
@@ -362,7 +399,11 @@ func (f *FS) Remove(ctx context.Context, user, p string) error {
 	}
 	if path.Base(path.Dir(p)) == TrashDir {
 		// Already in the trash: emptying it has to actually remove things.
-		return f.unlink(ctx, user, p)
+		if err := f.unlink(ctx, user, p); err != nil {
+			return err
+		}
+		f.note(user, "delete", p, "")
+		return nil
 	}
 	trash, err := f.ensureTrash(ctx, user, domain)
 	if err != nil {
@@ -374,7 +415,14 @@ func (f *FS) Remove(ctx context.Context, user, p string) error {
 	if err != nil {
 		return err
 	}
-	return errnoOf("remove", p, resp.Errno)
+	if err := errnoOf("remove", p, resp.Errno); err != nil {
+		return err
+	}
+	// Recorded as a delete, not a rename. It IS a move to the trash, but what
+	// the person did was delete the file, and the record is read by people
+	// asking where their file went.
+	f.note(user, "delete", p, "")
+	return nil
 }
 
 func (f *FS) unlink(ctx context.Context, user, p string) error {

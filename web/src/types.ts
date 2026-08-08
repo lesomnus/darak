@@ -156,3 +156,21 @@ export interface TeamsView {
   teams: TeamView[]
   users: string[]
 }
+
+/** One recorded change (internal/activity.Event). */
+export interface ActivityEvent {
+  at: string
+  user: string
+  action: 'create' | 'write' | 'delete' | 'rename' | 'mkdir'
+  path: string
+  to?: string
+  /** 'smb' includes a mounted share — a cifs mount is still SMB underneath. */
+  source: 'smb' | 'web'
+  from?: string
+}
+
+export interface ActivityReport {
+  events: ActivityEvent[]
+  /** False when no activity directory is configured. */
+  enabled: boolean
+}

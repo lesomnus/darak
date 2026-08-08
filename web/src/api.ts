@@ -1,5 +1,6 @@
 import {
   ApiError,
+  type ActivityReport,
   type AdminWhoami,
   type DiskReport,
   type DriftReport,
@@ -128,6 +129,15 @@ export const api = {
   adminDisk: (signal?: AbortSignal) => request<DiskReport>('/api/admin/disk', { signal }),
 
   adminAudit: (signal?: AbortSignal) => request<DriftReport>('/api/admin/audit', { signal }),
+
+  adminActivity: (params: { user?: string; path?: string; action?: string; days?: number }, signal?: AbortSignal) => {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '') q.set(k, String(v))
+    }
+    const qs = q.toString()
+    return request<ActivityReport>('/api/admin/activity' + (qs ? `?${qs}` : ''), { signal })
+  },
 
   adminSetSmb: (user: string, enabled: boolean) =>
     request<void>(`/api/admin/users/${encodeURIComponent(user)}/smb`, {
