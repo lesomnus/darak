@@ -32,7 +32,9 @@ export function FileRow({
   const hasMenu = !entry.dir || !isTrashFolder
 
   return (
-    <div className="row" role="button" tabIndex={0} onClick={onOpen} onKeyDown={onKeyDown}>
+    // data-row is what the virtualiser measures: it needs one real, laid-out
+    // row to know how tall the rest would be.
+    <div className="row" data-row role="button" tabIndex={0} onClick={onOpen} onKeyDown={onKeyDown}>
       <span className="icon" data-kind={kind}>
         <Icon name={kind} />
       </span>

@@ -121,7 +121,9 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.UI != nil {
 		mux.Handle("/", s.cfg.UI)
 	}
-	return mux
+	// Outermost, so it sees the Content-Type every handler below it settled on
+	// and can decide from that rather than from the route.
+	return Compress(mux)
 }
 
 // --- session plumbing ---
