@@ -43,7 +43,18 @@ die() {
 # into their own home. Creating the roots first means MkdirAll only ever makes
 # the leaf.
 log "layout under $DATA_ROOT"
-install -d -m 0755 "$DATA_ROOT" "$DATA_ROOT/homes" "$DATA_ROOT/teams"
+install -d -m 0755 "$DATA_ROOT" "$DATA_ROOT/teams"
+
+# homes is 0711, NOT 0755: traversal needs only the x bit, and the r bit would
+# only ever be used to list everybody's username. Each person still reaches
+# their own home (openat2 from the helper, and Samba's [homes] with
+# `path = .../%U`, both only traverse), and nothing needs to enumerate the
+# parent -- the interface navigates straight to homes/<user>.
+#
+# teams stays 0755 on purpose: a team NAME is not personal, seeing which teams
+# exist is useful, and the folders themselves are 2770 so a non-member still
+# cannot enter one.
+install -d -m 0711 "$DATA_ROOT/homes"
 install -d -m 0700 "$STATE_DIR"
 
 # --- seed -------------------------------------------------------------------
