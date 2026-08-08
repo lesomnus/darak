@@ -106,6 +106,51 @@ docker compose exec darak cat /proc/self/uid_map   # "0 0 4294967295"
 chmod 600 secrets/seed.secret
 ```
 
+## 리버스 프록시 뒤에 둘 때
+
+darak은 **경로 하나를 통째로** 받아야 합니다. 세 종류가 한 포트에 있고, 셋 다 같은 곳으로 가야 합니다:
+
+| 경로 | 무엇 |
+| --- | --- |
+| `/api/…` | API 전부 — 로그인, 파일, 공유, 운영, 팀 |
+| `/s/…` | 공유 링크. **로그인하지 않은 사람이 여는 곳**이라 인증을 앞단에서 걸면 안 됩니다 |
+| 그 외 | 브라우저 인터페이스. 알 수 없는 경로는 `index.html`을 돌려주므로 `/homes/alice` 같은 깊은 링크가 새로고침에도 살아 있습니다 |
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name files.example.com;
+    ssl_certificate     /etc/ssl/files.pem;
+    ssl_certificate_key /etc/ssl/files.key;
+
+    # 업로드는 통짜 파일입니다. 기본값은 1MB이고, 버퍼링을 켜두면 nginx가
+    # 파일 전체를 디스크에 받아쓴 뒤에야 darak에 넘깁니다.
+    client_max_body_size 0;
+    proxy_request_buffering off;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        # $host가 아니라 $http_host입니다. $host는 포트를 버리고, 공유 링크는
+        # 요청의 Host로 만들어지므로 표준 포트가 아닌 곳에 두면 열리지 않는
+        # 주소가 발급됩니다.
+        proxy_set_header Host              $http_host;
+        # 이게 없으면 공유 링크가 http://로 발급됩니다.
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_http_version 1.1;
+    }
+}
+```
+
+그리고 `DARAK_BEHIND_PROXY=1`을 주세요. 세션 쿠키는 프록시 뒤에서도 `Secure`로 남습니다 — 브라우저와 프록시 사이가 HTTPS이므로 그게 맞습니다.
+
+**서브패스에는 마운트할 수 없습니다.** `https://example.com/darak/` 같은 배치는 지금 동작하지 않습니다: 인터페이스가 `/api/…`를 절대 경로로 부르고, 번들도 `/assets/…`를 절대 경로로 참조합니다. 하위 도메인이나 전용 호스트를 쓰세요. 서브패스가 필요해지면 Vite의 `base`와 `api.ts`의 URL 조립을 함께 고쳐야 하는 일이지, 프록시 설정으로 해결되지 않습니다.
+
+> 위 설정은 실제로 nginx를 앞에 세워 확인했습니다: 로그인 쿠키 왕복, `/homes/alice`·`/admin` 깊은 링크,
+> 3MB 업로드, 그리고 발급된 공유 링크를 **로그아웃 상태로** 열어 3,000,000바이트를 받는 것까지.
+> `$http_host` 주의사항은 그 과정에서 실제로 밟은 것입니다 — `$host`로 두면 `https://localhost/s/…`가
+> 발급되어 아무 데도 닿지 않습니다.
+
 ## 계정 관리
 
 `config/roster.yaml`을 편집하고 재시작하면 됩니다. 부팅 순서는 `usersync validate` → `plan` → `apply`이고, roster에 문제가 있으면 **아무것도 바꾸지 않고 기동을 중단**합니다.
