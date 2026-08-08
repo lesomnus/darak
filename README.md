@@ -136,6 +136,19 @@ Links live outside the data volume, because
 [nas-design.md](./nas-design.md) §7 requires that volume to stay free of
 application state before it becomes a shared filesystem.
 
+## Trying it
+
+```sh
+docker compose -f deploy/local/docker-compose.yaml up --build
+```
+
+Web on :8080, SMB on :1445, a few accounts, and volumes that keep the data and
+the passwords across a rebuild. `/etc/passwd` is deliberately NOT one of them:
+accounts are recreated from a file with their numbers pinned, because what the
+data knows about its owners is the number. That is the same property the AD
+migration rests on, exercised on every start — see
+[deploy/local/README.md](./deploy/local/README.md).
+
 ## Tests
 
 ```sh

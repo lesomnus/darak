@@ -1,0 +1,57 @@
+# Local test stack: the server, its helper, and a real Samba, over one dataset.
+#
+#   docker compose -f deploy/local/docker-compose.yaml up --build
+#
+# Everything that has to outlive a rebuild is a named volume. What is NOT a
+# volume is /etc/passwd: accounts are recreated from users.conf on every start
+# with their numbers pinned, because the data knows its owners only as uid and
+# gid. Bind-mounting the account databases would not work anyway — useradd
+# rewrites them by rename, which replaces the inode a file mount is pinned to.
+
+services:
+  darak:
+    build:
+      # The repository root, so the committed interface build is in the context.
+      context: ../..
+      dockerfile: deploy/local/Dockerfile
+    # Root inside the container: starting a helper AS the requesting user is the
+    # whole design, and that needs the privilege to change credentials.
+    user: root
+    ports:
+      - "8080:8080"
+      # 445 is usually taken on a developer machine, and on macOS and Windows it
+      # is taken by the OS. Mount from the host with the port spelled out:
+      #   Linux   sudo mount -t cifs //127.0.0.1/alice /mnt -o port=1445,user=alice
+      #   macOS   open 'smb://alice@127.0.0.1:1445/alice'
+      - "1445:445"
+    volumes:
+      # The files themselves.
+      - data:/srv/data
+      # tdbsam lives here, so a password someone changed is not reset by the
+      # next rebuild. The accounts are disposable; their credentials are not.
+      - samba:/var/lib/samba
+      # Share links: capability tokens, deliberately NOT on the data volume —
+      # nas-design.md §7 keeps that volume free of application state, because it
+      # is the one that later becomes a shared filesystem.
+      - state:/var/lib/darak
+      # Read-only: this file is an input, and the container has no business
+      # editing the list of who exists.
+      - ./users.conf:/etc/darak/users.conf:ro
+    environment:
+      # Every account starts here and can be changed from the web UI or with
+      # smbpasswd; the change survives, because /var/lib/samba is a volume.
+      DARAK_DEFAULT_PASSWORD: darak
+    healthcheck:
+      # The interface, not an API route: an unauthenticated /api call correctly
+      # answers 401, which a health check would read as broken.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  data:
+  samba:
+  state:
