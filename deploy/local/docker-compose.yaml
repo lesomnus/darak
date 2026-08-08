@@ -34,13 +34,18 @@ services:
       # nas-design.md §7 keeps that volume free of application state, because it
       # is the one that later becomes a shared filesystem.
       - state:/var/lib/darak
-      # Read-only: this file is an input, and the container has no business
-      # editing the list of who exists.
-      - ./users.conf:/etc/darak/users.conf:ro
+      # Read-only: these are inputs, and the container has no business editing
+      # the list of who exists. Same shape as production's DARAK_CONFIG.
+      - ./config:/etc/darak:ro
     environment:
-      # Every account starts here and can be changed from the web UI or with
-      # smbpasswd; the change survives, because /var/lib/samba is a volume.
-      DARAK_DEFAULT_PASSWORD: darak
+      # Who may reach the operator page. Comma-separated names, which must be
+      # accounts the roster declares. Same variable as production.
+      DARAK_ADMIN_MEMBERS: alice
+      # Initial passwords are DERIVED from a seed generated into the state
+      # volume on first start, and printed in the container log -- the same
+      # mechanism production uses, rather than one fixed password that only
+      # exists here. A password someone changes survives a rebuild, because
+      # /var/lib/samba is a volume.
     healthcheck:
       # The interface, not an API route: an unauthenticated /api call correctly
       # answers 401, which a health check would read as broken.

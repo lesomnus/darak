@@ -1,0 +1,51 @@
+# The accounts for the local stack.
+#
+# This replaces the users.conf that a shell script used to read. It is the same
+# format production uses, applied by the same `usersync apply`, so the boot path
+# being tested here is the boot path that runs there.
+#
+# The uids are pinned, and that is what makes the container disposable: the data
+# volume knows its owners as NUMBERS, so /etc/passwd can be thrown away and
+# rebuilt on every start with every file still belonging to the right person.
+# Destroy the container, bring it back, and check with stat(1).
+
+groups:
+  - name: team-a
+    gid: 10001
+    description: Perception team
+  - name: team-b
+    gid: 10002
+    description: Planning team
+
+users:
+  - name: alice
+    uid: 3001
+    full_name: Alice Kim
+    groups: [team-a]
+
+  - name: bob
+    uid: 3002
+    full_name: Bob Lee
+    groups: [team-a, team-b]
+
+  - name: carol
+    uid: 3003
+    full_name: Carol Choi
+    groups: [team-b]
+
+  - name: dave
+    uid: 3004
+    full_name: Dave Park          # no groups -> home only
+
+  # Two lifecycle states worth having present, because they are the ones with
+  # no equivalent in the old users.conf and therefore never got exercised.
+  - name: erin
+    uid: 3005
+    full_name: Erin Jung
+    groups: [team-a]
+    status: disabled              # on leave: SMB off, home and uid kept
+
+  - name: frank
+    uid: 3006
+    full_name: Frank Oh
+    status: reserved              # left: no account, but uid 3006 is burned

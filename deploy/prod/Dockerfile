@@ -55,7 +55,15 @@ FROM debian:trixie-slim
 RUN apt-get update -qq \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
 		samba samba-common-bin winbind acl attr ca-certificates tzdata curl \
-	&& rm -rf /var/lib/apt/lists/*
+	&& rm -rf /var/lib/apt/lists/* \
+	# Debian's samba package ships an /etc/samba/smb.conf with [homes],
+	# [printers] and [print$] already in it. The entrypoint seeds its own global
+	# section only when the file is ABSENT, so leaving this here meant the seeded
+	# section never landed, print shares were exposed on a file server, and a
+	# SECOND [homes] sat above the one usersync generates -- with Samba merging
+	# the two by last-wins per parameter. Removing it makes "seed once" mean what
+	# it says. An operator who mounts their own smb.conf still wins.
+	&& rm -f /etc/samba/smb.conf
 
 COPY --from=build /out/darak /out/darak-helper /usr/local/bin/
 COPY --from=usersync /go/bin/usersync /usr/local/bin/usersync

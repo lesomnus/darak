@@ -110,8 +110,13 @@ func TestIsAdminIsNotCached(t *testing.T) {
 	}
 }
 
+// Verbatim `usersync export --format csv` output, copied from a running
+// container rather than written from memory. The empty uid_number on a group
+// row is the whole reason this is a fixture and not a sentence: a parser that
+// reads the group's number out of column 2 finds nothing, drops every group,
+// and silently reports that nobody is on a team.
 const exportCSV = `type,name,uid_number,gid_number,unix_home_directory,login_shell
-group,team-a,10001,10001,,
+group,team-a,,10001,,
 user,alice,3001,3001,/research/home/alice,/usr/sbin/nologin
 user,bob,3002,3002,/research/home/bob,/usr/sbin/nologin
 `

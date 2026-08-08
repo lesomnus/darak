@@ -50,6 +50,45 @@ elif [[ ${DARAK_BEHIND_PROXY:-} != "1" ]]; then
 	die "no TLS: set DARAK_TLS_CERT and DARAK_TLS_KEY, or DARAK_BEHIND_PROXY=1 if a reverse proxy terminates it"
 fi
 
+# Order matters here, and it is not the obvious one.
+#
+# The layout roots come FIRST because usersync creates a home with MkdirAll,
+# and MkdirAll gives every intermediate directory the LEAF's mode -- an absent
+# /srv/data/homes would be created 0700 owned by root and nobody could traverse
+# into their own home.
+#
+# smb.conf comes before the accounts because `usersync apply` registers each
+# SMB account with smbpasswd, and smbpasswd refuses to run without a loadable
+# config. That used to work only because Debian's samba package ships an
+# smb.conf; with that removed (see the Dockerfile) the dependency is real.
+
+# --- layout -----------------------------------------------------------------
+
+# The root has to be traversable by everyone; what is private is underneath.
+install -d -m 0755 "$DATA_ROOT" "$DATA_ROOT/homes" "$DATA_ROOT/teams"
+install -d -m 0700 "$STATE_DIR"
+
+# --- samba ------------------------------------------------------------------
+
+log "samba (config)"
+install -d -m 0755 /var/lib/samba/private /var/log/samba /run/samba
+
+if [[ ! -f /etc/samba/smb.conf ]]; then
+	# The marker block usersync manages needs a file to be spliced into, and the
+	# global section is the operator's to own — so seed it once and never again.
+	cat >/etc/samba/smb.conf <<-EOF
+		[global]
+		   workgroup = ${SMB_WORKGROUP:-WORKGROUP}
+		   server string = ${SMB_SERVER_STRING:-darak}
+		   security = user
+		   passdb backend = tdbsam
+		   map to guest = never
+		   disable netbios = yes
+		   # Everything below the marker is generated from the roster; edit the
+		   # roster, not this file.
+	EOF
+fi
+
 # --- accounts ---------------------------------------------------------------
 
 log "accounts"
@@ -78,33 +117,6 @@ audit)
 	usersync apply
 	;;
 esac
-
-# --- layout -----------------------------------------------------------------
-
-# The root has to be traversable by everyone; what is private is underneath.
-install -d -m 0755 "$DATA_ROOT" "$DATA_ROOT/homes" "$DATA_ROOT/teams"
-install -d -m 0700 "$STATE_DIR"
-
-# --- samba ------------------------------------------------------------------
-
-log "samba"
-install -d -m 0755 /var/lib/samba/private /var/log/samba /run/samba
-
-if [[ ! -f /etc/samba/smb.conf ]]; then
-	# The marker block usersync manages needs a file to be spliced into, and the
-	# global section is the operator's to own — so seed it once and never again.
-	cat >/etc/samba/smb.conf <<-EOF
-		[global]
-		   workgroup = ${SMB_WORKGROUP:-WORKGROUP}
-		   server string = ${SMB_SERVER_STRING:-darak}
-		   security = user
-		   passdb backend = tdbsam
-		   map to guest = never
-		   disable netbios = yes
-		   # Everything below the marker is generated from the roster; edit the
-		   # roster, not this file.
-	EOF
-fi
 
 # --- operator group ---------------------------------------------------------
 #

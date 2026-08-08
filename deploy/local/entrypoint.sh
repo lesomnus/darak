@@ -1,171 +1,152 @@
 #!/usr/bin/env bash
-# Bring the local stack up: accounts, layout, Samba, then the server.
+# Bring the local stack up the way production does.
 #
-# Everything here is idempotent, because the container filesystem is discarded on
-# every rebuild while the volumes are not. Accounts are recreated from
-# users.conf with their numbers pinned, so the data — which knows its owners only
-# as uid and gid — still belongs to the right people afterwards. That is the same
-# property the AD migration depends on, exercised every time this starts.
+# The accounts, the group folders and the smb.conf share block all come from
+# usersync reading roster.yaml -- the same tool, the same files, the same order
+# as deploy/prod. This used to be a shell script reading a users.conf, which
+# kept the stack free of a second repository but meant the account path
+# exercised here was not the account path that runs there. Everything that only
+# exists on the real path -- export, audit, shares --write, the audit-mode
+# branch, disabled and reserved users -- went untested as a result.
 #
-# In production usersync owns accounts and generates the share definitions. This
-# script stands in for it so the stack needs no second repository; where the two
-# would disagree, usersync is right.
+# What differs from production is values, not mechanism:
+#   - no TLS, so the session cookie is not marked Secure
+#   - the seed lives in the state volume and the derived passwords are printed,
+#     because a test stack you cannot log into is not one
+#   - the operator group's members come from an env var rather than a .env file
 set -euo pipefail
 
 DATA_ROOT=${DARAK_ROOT:-/srv/data}
-USERS_CONF=${DARAK_USERS:-/etc/darak/users.conf}
-DEFAULT_PASSWORD=${DARAK_DEFAULT_PASSWORD:-darak}
+CONFIG_DIR=${DARAK_CONFIG:-/etc/darak}
 STATE_DIR=${DARAK_STATE:-/var/lib/darak}
+SEED_FILE=${DARAK_SEED:-$STATE_DIR/seed.secret}
 ADMIN_GROUP=${DARAK_ADMIN_GROUP:-admin}
 ADMIN_GID=${DARAK_ADMIN_GID:-2000}
+ADMIN_MEMBERS=${DARAK_ADMIN_MEMBERS:-alice}
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-
-# --- accounts ---------------------------------------------------------------
-
-ensure_group() { # name gid
-	if ! getent group "$1" >/dev/null; then
-		groupadd -g "$2" "$1"
-	fi
+die() {
+	printf '\033[1;31mfatal:\033[0m %s\n' "$*" >&2
+	exit 1
 }
 
-ensure_user() { # name uid groups
-	local name=$1 uid=$2 groups=${3:-}
-	if ! getent passwd "$name" >/dev/null; then
-		# A user private group with gid == uid, then the account: the same shape
-		# usersync creates, so a file made here and one made there look alike.
-		getent group "$name" >/dev/null || groupadd -g "$uid" "$name"
-		useradd -M -u "$uid" -g "$uid" \
-			-d "$DATA_ROOT/homes/$name" \
-			-s /usr/sbin/nologin \
-			"$name"
-		# No interactive login: the unix password stays locked and SMB carries
-		# its own credential.
-		usermod -L "$name"
-	fi
-	# Supplementary groups are replaced, not added to, so this file is the whole
-	# truth about team membership.
-	usermod -G "$groups" "$name"
-}
-
-# The operator group is NOT a `group` line in users.conf, because a group line
-# also makes a team folder and an SMB share -- and being allowed to manage
-# accounts should not conjure a shared directory. It is created here at a gid
-# below the managed band and applied after every user's supplementary groups
-# have been set, since ensure_user REPLACES that set.
-ensure_admin_group() {
-	[[ -n $ADMIN_GROUP ]] || return 0
-	getent group "$ADMIN_GROUP" >/dev/null || groupadd -g "$ADMIN_GID" "$ADMIN_GROUP"
-	local any=0
-	while read -r kind rest; do
-		[[ $kind == admin ]] || continue
-		for name in $rest; do
-			if ! getent passwd "$name" >/dev/null; then
-				echo "WARNING: admin $name is not an account in $USERS_CONF; skipping" >&2
-				continue
-			fi
-			usermod -aG "$ADMIN_GROUP" "$name"
-			log "  $name is an operator"
-			any=1
-		done
-	done < <(config_lines)
-	[[ $any == 1 ]] || echo "note: no 'admin' line in $USERS_CONF, so nobody can reach the operator page" >&2
-}
-
-ensure_smb_password() { # name
-	# Only when there is no entry yet. Re-running must not undo a password the
-	# user changed — that is why /var/lib/samba is a volume.
-	if ! pdbedit -L 2>/dev/null | grep -q "^$1:"; then
-		printf '%s\n%s\n' "$DEFAULT_PASSWORD" "$DEFAULT_PASSWORD" |
-			smbpasswd -a -s "$1" >/dev/null
-		smbpasswd -e "$1" >/dev/null
-	fi
-}
+[[ -f "$CONFIG_DIR/roster.yaml" ]] ||
+	die "no roster at $CONFIG_DIR/roster.yaml -- is deploy/local/config mounted?"
+[[ -f "$CONFIG_DIR/usersync.yaml" ]] ||
+	die "no config at $CONFIG_DIR/usersync.yaml -- is deploy/local/config mounted?"
 
 # --- layout -----------------------------------------------------------------
+#
+# BEFORE the accounts, not after. usersync creates a home with MkdirAll, and
+# MkdirAll gives every intermediate directory the LEAF's mode -- so an absent
+# /srv/data/homes would be created 0700 owned by root, and nobody could traverse
+# into their own home. Creating the roots first means MkdirAll only ever makes
+# the leaf.
+log "layout under $DATA_ROOT"
+install -d -m 0755 "$DATA_ROOT" "$DATA_ROOT/homes" "$DATA_ROOT/teams"
+install -d -m 0700 "$STATE_DIR"
 
-ensure_layout() {
-	# The root has to be traversable by everyone; what is private is underneath.
-	install -d -m 0755 "$DATA_ROOT" "$DATA_ROOT/homes" "$DATA_ROOT/teams"
+# --- seed -------------------------------------------------------------------
+#
+# Initial SMB passwords are DERIVED from this seed, so it has to outlive a
+# rebuild or every restart would hand out different ones. It is generated into
+# the state volume rather than committed: a seed in git is a seed that has
+# leaked, and this stack is meant to look like the real one.
+if [[ ! -f $SEED_FILE ]]; then
+	log "seed"
+	(
+		umask 077
+		head -c 32 /dev/urandom | base64 >"$SEED_FILE"
+	)
+fi
+chmod 0600 "$SEED_FILE"
 
-	while read -r kind name id _; do
-		case "$kind" in
-		group)
-			local dir="$DATA_ROOT/teams/$name"
-			install -d "$dir"
-			chgrp "$id" "$dir"
-			# chmod after chgrp: changing the owner clears setgid. Without that
-			# bit, files created inside take their author's own group and every
-			# teammate is read-only on them.
-			chmod 2770 "$dir"
-			;;
-		user)
-			local dir="$DATA_ROOT/homes/$name"
-			install -d "$dir"
-			chown "$id:$id" "$dir"
-			chmod 0700 "$dir"
-			;;
-		esac
-	done < <(config_lines)
-}
-
-config_lines() {
-	sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$USERS_CONF"
-}
+# smb.conf comes BEFORE the accounts: `usersync apply` registers each SMB
+# account with smbpasswd, and smbpasswd refuses to run without a loadable
+# config. That used to appear to work only because Debian's samba package ships
+# an smb.conf of its own -- which also meant the section seeded below never
+# landed, and a second [homes] sat above the one usersync generates. The image
+# removes the distro file now, so this dependency is real and explicit.
 
 # --- samba ------------------------------------------------------------------
 
-write_smb_conf() {
-	# The mask directives are the ones measured against a real smbd, not the ones
-	# they look like they should be: Samba derives the base mode from DOS
-	# attributes (0666 for files, 0777 for directories), so the mask alone
-	# already yields 0660. `force directory mode` is the one that earns its
-	# place — a mask can only clear bits, so nothing else can put setgid back if
-	# a parent ever loses it. See usersync's scripts/verify-samba-modes.sh.
-	{
-		cat <<-EOF
-			[global]
-			   workgroup = WORKGROUP
-			   server string = darak (local)
-			   security = user
-			   passdb backend = tdbsam
-			   map to guest = never
-			   log level = 0
-			   disable netbios = yes
-			   smb ports = 445
+log "samba (config)"
+install -d -m 0755 /var/lib/samba/private /var/log/samba /run/samba
 
-			[homes]
-			   comment = Home Directories
-			   path = $DATA_ROOT/homes/%U
-			   browseable = no
-			   read only = no
-			   valid users = %S
-			   create mask = 0600
-			   directory mask = 0700
-		EOF
-		while read -r kind name _ _; do
-			[[ $kind == group ]] || continue
-			cat <<-EOF
+if [[ ! -f /etc/samba/smb.conf ]]; then
+	# usersync splices the [homes] and [<team>] shares into a marker block; the
+	# global section is the operator's to own, so it is seeded once and never
+	# again. The port and log level are the only local touches.
+	cat >/etc/samba/smb.conf <<-EOF
+		[global]
+		   workgroup = WORKGROUP
+		   server string = darak (local)
+		   security = user
+		   passdb backend = tdbsam
+		   map to guest = never
+		   log level = 0
+		   disable netbios = yes
+		   smb ports = 445
+		   # Everything below the marker is generated from the roster; edit the
+		   # roster, not this file.
+	EOF
+fi
 
-				[$name]
-				   comment = $name shared
-				   path = $DATA_ROOT/teams/$name
-				   browseable = yes
-				   read only = no
-				   valid users = @$name
-				   force group = $name
-				   create mask = 0660
-				   directory mask = 2770
-				   force directory mode = 2770
-			EOF
-		done < <(config_lines)
-	} >/etc/samba/smb.conf
-	# testparm warns about these before smbd has had a chance to create them, and
-	# a stack that greets you with warnings on every start teaches you to ignore
-	# them.
-	install -d -m 0755 /var/lib/samba/private /var/log/samba /run/samba
-	testparm -s /etc/samba/smb.conf >/dev/null
-}
+# --- accounts ---------------------------------------------------------------
+
+log "accounts"
+cd "$CONFIG_DIR"
+
+# Static check first, with no system access at all: a typo in the roster should
+# be a refusal to start, not a half-applied set of accounts.
+usersync validate
+
+# `mode: audit` means a directory service owns the accounts and usersync refuses
+# to create any. Reading the mode rather than assuming is what keeps the boot
+# from failing on the exact day of a cutover -- and having the branch here is
+# part of the point of this stack, because it is where that day gets rehearsed.
+mode=$(usersync config 2>/dev/null | sed -n 's/^mode:[[:space:]]*//p' | tr -d '"' | head -1)
+case "${mode:-manage}" in
+audit)
+	log "mode: audit -- a directory owns the accounts; verifying instead of applying"
+	usersync audit || echo "WARNING: the directory and the roster disagree; see above" >&2
+	;;
+*)
+	# Show what will change before it changes. On a healthy restart this is
+	# empty, which is what makes the one time it is not worth reading.
+	usersync plan || die "usersync refused the roster; nothing has been changed"
+	usersync apply
+	;;
+esac
+
+# --- operator group ---------------------------------------------------------
+#
+# Not a roster group: a roster group also gets a team folder and an SMB share,
+# and being allowed to manage accounts is not a reason to conjure a shared
+# directory. gid 2000 is below the managed band (10000-19999) and above the
+# system floor, so usersync neither creates it nor reports it in `audit`.
+#
+# Applied AFTER usersync, because `apply` sets each user's supplementary groups
+# to exactly what the roster says -- adding the group first would be undone.
+if [[ -n $ADMIN_GROUP ]]; then
+	log "operator group ($ADMIN_GROUP, gid $ADMIN_GID)"
+	getent group "$ADMIN_GROUP" >/dev/null || groupadd -g "$ADMIN_GID" "$ADMIN_GROUP"
+	for u in ${ADMIN_MEMBERS//,/ }; do
+		if ! id "$u" >/dev/null 2>&1; then
+			echo "WARNING: $u is in DARAK_ADMIN_MEMBERS but is not an account; skipping" >&2
+			continue
+		fi
+		usermod -aG "$ADMIN_GROUP" "$u"
+		log "  $u is an operator"
+	done
+	[[ -n $ADMIN_MEMBERS ]] ||
+		echo "note: DARAK_ADMIN_MEMBERS is empty, so nobody can reach the operator page" >&2
+fi
+
+# The share definitions come from the roster too, so a team added there appears
+# over SMB without anyone editing smb.conf. testparm-validated before it
+# replaces anything, with the previous file kept as .bak.
+usersync shares --write
 
 start_samba() {
 	winbindd -D
@@ -180,44 +161,16 @@ start_samba() {
 	echo "winbindd did not become ready; web logins will fail" >&2
 	return 1
 }
-
-# --- go ---------------------------------------------------------------------
-
-# A missing file is not "no accounts": it means the mount is wrong, and every
-# step after this would quietly do nothing while the stack still came up and
-# refused every login for reasons that look like anything but a bad path.
-[[ -f $USERS_CONF ]] || {
-	printf '\033[1;31mfatal:\033[0m no account file at %s -- is deploy/local/users.conf mounted?\n' "$USERS_CONF" >&2
-	exit 1
-}
-
-log "accounts from $USERS_CONF"
-while read -r kind name id extra; do
-	case "$kind" in
-	group) ensure_group "$name" "$id" ;;
-	user) ensure_user "$name" "$id" "${extra:-}" ;;
-	admin) ;; # applied below, after every user's group set is final
-	*) echo "ignoring unknown line: $kind $name" >&2 ;;
-	esac
-done < <(config_lines)
-
-log "operator group ($ADMIN_GROUP)"
-ensure_admin_group
-
-log "layout under $DATA_ROOT"
-ensure_layout
-
-log "samba"
-write_smb_conf
 start_samba
-while read -r kind name _ _; do
-	if [[ $kind == user ]]; then
-		ensure_smb_password "$name"
-	fi
-done < <(config_lines)
 
-install -d -m 0700 "$STATE_DIR"
-
+# --- banner -----------------------------------------------------------------
+#
+# The initial passwords are derived rather than fixed, so the only way to know
+# them is to ask -- which also exercises `usersync passwd`, the command an
+# operator actually runs when onboarding someone. A password the user has since
+# changed is NOT reset by a restart (tdbsam is a volume), so what is printed is
+# the initial value: after that point it is the value to reset TO, not the one
+# in use.
 cat <<EOF
 
   darak is starting.
@@ -225,10 +178,22 @@ cat <<EOF
     web    http://localhost:8080
     smb    //localhost/<username>   and   //localhost/<team>
 
-  Accounts come from $USERS_CONF, with the password "$DEFAULT_PASSWORD"
-  until someone changes it. Changed passwords survive a restart; the accounts
-  themselves are recreated from the file every time, with their numbers pinned,
-  which is what keeps the files in the volume belonging to the right people.
+  Accounts come from $CONFIG_DIR/roster.yaml, applied by usersync -- the same
+  tool and the same boot sequence as production. Edit the roster and restart.
+
+  Initial SMB passwords (derived from the seed in the state volume):
+
+EOF
+while read -r name; do
+	printf '    %-8s %s\n' "$name" "$(usersync passwd "$name" 2>/dev/null | tail -1)"
+done < <(usersync export --format csv 2>/dev/null | awk -F, '$1 == "user" { print $2 }')
+cat <<EOF
+
+  Operators (members of the "$ADMIN_GROUP" group): ${ADMIN_MEMBERS:-none}
+
+  The accounts are recreated from the roster on every start with their numbers
+  pinned, which is what keeps the files in the volume belonging to the right
+  people. Destroy the container, bring it back, and stat(1) a file.
 
 EOF
 

@@ -1,0 +1,32 @@
+# Operational settings for the local stack.
+#
+# This is the same file, read by the same tool, as the one in production. The
+# whole point of the local stack is that the account path it exercises is the
+# production account path -- so what differs here is values, never mechanism.
+
+paths:
+  # darak serves <root>/homes/<user> and <root>/teams/<team>, so usersync's two
+  # roots are those. In production these are ZFS datasets; here they are just
+  # directories on the data volume.
+  home: /srv/data/homes
+  groups: /srv/data/teams
+
+# The reserved band (nas-design.md ADR-8). Same numbers as production, because
+# a uid that means one thing here and another there would make every test of
+# ownership meaningless.
+manage:
+  uid: { min: 3000, max: 9999 }
+  gid: { min: 10000, max: 19999 }
+
+protect:
+  system_floor: 1000
+
+# manage: this container makes the accounts. Set audit to rehearse the day a
+# directory service takes them over -- apply and purge then refuse, and the
+# entrypoint audits instead. That branch is worth rehearsing before the day it
+# matters, and this is where to do it.
+mode: manage
+
+on_out_of_scope: error
+seed_file: /var/lib/darak/seed.secret
+provider: auto

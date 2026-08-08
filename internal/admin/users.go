@@ -167,11 +167,28 @@ func (a *Admin) Inventory(ctx context.Context) (*Inventory, error) {
 	return inv, nil
 }
 
-// parseExportCSV reads `usersync export --format csv`.
+// Column positions in `usersync export --format csv`. They are the RFC2307
+// attributes a directory would be seeded with:
 //
-// Its columns are the RFC2307 attributes a directory would be seeded with:
-// type,name,uid_number,gid_number,unix_home_directory,login_shell — with `type`
-// distinguishing a user row from a group row.
+//	type,name,uid_number,gid_number,unix_home_directory,login_shell
+//
+// A GROUP row leaves uid_number EMPTY and carries its number in gid_number:
+//
+//	group,team-a,,10001,,
+//	user,alice,3001,3001,/srv/data/homes/alice,/usr/sbin/nologin
+//
+// Reading column 2 for both is why group rows used to be dropped whole, which
+// left nothing to translate a user's gids into names and made every team column
+// on the operator page empty.
+const (
+	colType = 0
+	colName = 1
+	colUID  = 2
+	colGID  = 3
+	colHome = 4
+)
+
+// parseExportCSV reads `usersync export --format csv`.
 func parseExportCSV(r io.Reader) ([]User, []Group, error) {
 	rd := csv.NewReader(r)
 	rd.FieldsPerRecord = -1
@@ -180,24 +197,37 @@ func parseExportCSV(r io.Reader) ([]User, []Group, error) {
 		return nil, nil, fmt.Errorf("admin: parse account export: %w", err)
 	}
 
+	num := func(row []string, col int) (uint32, bool) {
+		if col >= len(row) {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(row[col], 10, 32)
+		return uint32(v), err == nil
+	}
+
 	users, groups := []User{}, []Group{}
 	for i, row := range rows {
-		if i == 0 || len(row) < 4 {
-			continue // header, or a row shorter than the fields we read
+		if i == 0 || len(row) <= colGID {
+			continue // header, or a row shorter than the fields read below
 		}
-		id, err := strconv.ParseUint(row[2], 10, 32)
-		if err != nil {
-			continue
-		}
-		switch row[0] {
+		switch row[colType] {
 		case "user":
-			u := User{Name: row[1], UID: uint32(id), Groups: []string{}}
-			if len(row) > 4 {
-				u.Home = row[4]
+			uid, ok := num(row, colUID)
+			if !ok {
+				continue
+			}
+			u := User{Name: row[colName], UID: uid, Groups: []string{}}
+			u.GID, _ = num(row, colGID)
+			if len(row) > colHome {
+				u.Home = row[colHome]
 			}
 			users = append(users, u)
 		case "group":
-			groups = append(groups, Group{Name: row[1], GID: uint32(id), Members: []string{}})
+			gid, ok := num(row, colGID)
+			if !ok {
+				continue
+			}
+			groups = append(groups, Group{Name: row[colName], GID: gid, Members: []string{}})
 		}
 	}
 	sort.Slice(users, func(i, j int) bool { return users[i].Name < users[j].Name })
