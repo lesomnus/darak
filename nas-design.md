@@ -432,22 +432,34 @@ SMB의 상태 — 락, oplock/lease, share mode — 는 파일시스템이 아�
 
 ### Phase 0 — 기반
 
+> **구현 완료** (2026-08-08). `internal/wire` · `internal/helper` · `internal/helperpool` · `internal/lint`,
+> 실제 uid 분리 검증은 `internal/integration`. 강등은 `setpriv` 대신 자식 프로세스 credential 을 쓴다
+> (의존성 감소 + 보조 그룹을 명시적 목록으로 넘겨 변경 감지가 가능해짐). 상세는 `docs/helper-protocol.md`.
+
 > **이 단계가 이 프로젝트에서 가장 무거운 항목이다.** [ADR-3의 프로토콜 범위](#-헬퍼-프로토콜의-범위--이-설계-최대의-함정) 참조 — 불변식 하나만 놓쳐도 ADR-3이 배제한 보안 사고가 그대로 돌아온다.
 
-- [ ] 헬퍼 **오퍼레이션 집합** 설계 (유닉스 소켓 + `SCM_RIGHTS`) — `OPEN`/`OPENAT_CREATE`/`MKDIR`/`RENAME`/`LINK`/`UNLINK`/`RMDIR`/`STAT`/`CHMOD`/`SETXATTR`/`READDIR`
-- [ ] 요청 다중화 (head-of-line blocking 방지)
-- [ ] `setpriv` 기반 헬퍼 기동 / 유휴 회수 / 그룹 변경 시 강제 재기동
-- [ ] `openat2(RESOLVE_BENEATH)` 래퍼 — **헬퍼 안에** 배치
-- [ ] 불변식 강제: 서버는 경로 기반 syscall·`*at()`을 직접 호출하지 않음 (lint 또는 리뷰 체크리스트)
-- [ ] mode 규칙 적용 지점 확정 (umask 아닌 명시적 `fchmod` 권장)
+- [x] 헬퍼 **오퍼레이션 집합** 설계 (유닉스 소켓 + `SCM_RIGHTS`) — `OPEN`/`OPENAT_CREATE`/`MKDIR`/`RENAME`/`LINK`/`UNLINK`/`RMDIR`/`STAT`/`CHMOD`/`SETXATTR`/`READDIR`
+- [x] 요청 다중화 (head-of-line blocking 방지)
+- [x] 헬퍼 기동 / 유휴 회수 / 그룹 변경 시 강제 재기동
+- [x] `openat2(RESOLVE_BENEATH)` 래퍼 — **헬퍼 안에** 배치
+- [x] 불변식 강제: 서버는 경로 기반 syscall·`*at()`을 직접 호출하지 않음 (lint 또는 리뷰 체크리스트)
+- [x] mode 규칙 적용 지점 확정 (umask 아닌 명시적 `fchmod` 권장)
 - [ ] usersync 배포 + `roster.yaml` 부트스트랩 ([ADR-8](#adr-8-계정-생명주기는-usersync에-위임))
 - [ ] winbindd 기동 (`ntlm_auth` 전제, [ADR-2](#adr-2-인증은-tdbsam-하나-sso-미채택))
 
 ### Phase 1 — 최소 동작
 
-- [ ] 인증 — `ntlm_auth` → tdbsam. `Authenticator` 인터페이스 뒤에 배치
-- [ ] 디렉터리 목록 / 다운로드 (Range 포함)
-- [ ] 업로드 (임시 파일 → fsync → link → rename → dir fsync)
+> **부분 완료** (2026-08-08). API·인증·쓰기 규약·휴지통은 `internal/{auth,vfs,server}` 에 있고
+> 컨테이너 e2e 로 검증된다. 웹 UI 와 usersync 배포가 남았다.
+>
+> ⚠️ **정정**: `ntlm_auth` 의 평문 검증 프로토콜은 `ntlm-server-1` 이 아니라 **`squid-2.5-basic`** 이다.
+> 전자는 NTLM 챌린지/응답이라 올바른 비밀번호에도 `Authenticated: No` 를 답한다. 또한 두 필드가
+> **무조건 언이스케이프**되므로 퍼센트 인코딩이 안전장치가 아니라 정확성 요건이다(`%` 든 비밀번호가 거부됨).
+> 실제 Samba 4.22 로 측정했다.
+
+- [x] 인증 — `ntlm_auth` → tdbsam. `Authenticator` 인터페이스 뒤에 배치
+- [x] 디렉터리 목록 / 다운로드 (Range 포함)
+- [x] 업로드 (임시 파일 → fsync → link → rename → dir fsync)
 - [ ] 휴지통 (덮어쓰기 시 자동, 수동 복원 UI)
 - [ ] 디렉터리 레이아웃 및 Samba 공유 구성 (`usersync shares --write`)
 
