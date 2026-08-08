@@ -116,7 +116,7 @@ func spawn(t *testing.T, uid, gid uint32, groups []uint32) *helperpool.Helper {
 	t.Helper()
 	h, err := helperpool.Spawn(helperpool.Spec{
 		Bin: helperBin, Root: dataRoot,
-		UID: uid, GID: gid, Groups: groups,
+		Creds: helperpool.Creds{UID: uid, GID: gid, Groups: groups},
 	})
 	if err != nil {
 		t.Fatalf("spawn helper for uid %d: %v", uid, err)
@@ -312,7 +312,7 @@ func TestEscapesAreRefusedForARealUser(t *testing.T) {
 
 // A helper must never run as root: every permission check it made would pass.
 func TestSpawnRefusesRoot(t *testing.T) {
-	if _, err := helperpool.Spawn(helperpool.Spec{Bin: helperBin, Root: dataRoot, UID: 0, GID: 0}); err == nil {
+	if _, err := helperpool.Spawn(helperpool.Spec{Bin: helperBin, Root: dataRoot, Creds: helperpool.Creds{}}); err == nil {
 		t.Fatal("spawning a helper as root must be refused")
 	}
 }
