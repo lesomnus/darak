@@ -34,9 +34,10 @@ services:
       # nas-design.md §7 keeps that volume free of application state, because it
       # is the one that later becomes a shared filesystem.
       - state:/var/lib/darak
-      # Read-only: these are inputs, and the container has no business editing
-      # the list of who exists. Same shape as production's DARAK_CONFIG.
-      - ./config:/etc/darak:ro
+      # Writable, like production's DARAK_CONFIG. darak edits exactly one thing
+      # here -- `users[].groups`, on behalf of a team owner, through
+      # `usersync member`. Everything else the roster decides stays a hand edit.
+      - ./config:/etc/darak
     environment:
       # Who may reach the operator page. Comma-separated names, which must be
       # accounts the roster declares. Same variable as production.

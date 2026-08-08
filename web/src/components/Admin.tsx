@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import { formatDate, formatSize } from '../lib/format'
-import type { AdminUser, DiskReport, DriftReport, Inventory } from '../types'
+import type { AdminUser, DiskReport, DriftReport, Inventory, TeamsView } from '../types'
 
 /**
  * The operator page.
@@ -15,27 +15,45 @@ import type { AdminUser, DiskReport, DriftReport, Inventory } from '../types'
  * What is here is the reversible half: suspending an SMB account and resetting
  * an SMB password, both of which live in tdbsam and leave the ledger untouched.
  */
-export function Admin({ me, onError }: { me: string; onError: (message: string) => void }) {
+export function Admin({
+  me,
+  isAdmin,
+  onError,
+}: {
+  me: string
+  /** Whether to fetch the administrator panels at all. A team owner is not an
+   *  administrator and would get 404 from every one of them. */
+  isAdmin: boolean
+  onError: (message: string) => void
+}) {
   const [inv, setInv] = useState<Inventory | null>(null)
   const [disk, setDisk] = useState<DiskReport | null>(null)
   const [drift, setDrift] = useState<DriftReport | null>(null)
+  const [teams, setTeams] = useState<TeamsView | null>(null)
   const [busy, setBusy] = useState('')
   const [resetting, setResetting] = useState<string | null>(null)
 
   const load = useCallback(
     (signal?: AbortSignal) => {
-      // Three independent panels: one backend being down should cost that
-      // panel, not the page. An operator opens this when something is wrong.
-      api.adminUsers(signal).then(setInv).catch(handle)
-      api.adminDisk(signal).then(setDisk).catch(handle)
-      api.adminAudit(signal).then(setDrift).catch(handle)
+      // Independent panels: one backend being down should cost that panel, not
+      // the page. An operator opens this when something is wrong.
+      //
+      // The teams panel is fetched for everyone; the rest only for an
+      // administrator, because an owner gets 404 from them by design and an
+      // error toast for each would be the page's first impression.
+      api.teams(signal).then(setTeams).catch(handle)
+      if (isAdmin) {
+        api.adminUsers(signal).then(setInv).catch(handle)
+        api.adminDisk(signal).then(setDisk).catch(handle)
+        api.adminAudit(signal).then(setDrift).catch(handle)
+      }
 
       function handle(e: unknown) {
         if (signal?.aborted) return
         onError(e instanceof Error ? e.message : '읽을 수 없습니다.')
       }
     },
-    [onError],
+    [onError, isAdmin],
   )
 
   useEffect(() => {
@@ -61,6 +79,9 @@ export function Admin({ me, onError }: { me: string; onError: (message: string) 
       <Capacity disk={disk} />
       <Drift drift={drift} />
 
+      <Teams view={teams} onChanged={() => load()} onError={onError} />
+
+      {isAdmin && (
       <section>
         <h2>
           사용자 <span className="muted small">{inv ? `${inv.users.length}명` : ''}</span>
@@ -102,13 +123,13 @@ export function Admin({ me, onError }: { me: string; onError: (message: string) 
           </tbody>
         </table>
         <p className="muted small">
-          계정 생성·삭제와 팀 배정은 여기서 하지 않습니다. <code>roster.yaml</code>을 고치고
-          커밋한 뒤 재시작하면 반영됩니다 — 누구에게 어떤 uid를 줬는지의 기록이 곧 그 파일의 git
-          이력이고, 여기서 바꾸면 그 기록이 남지 않습니다.
+          계정 생성·삭제와 uid는 여기서 하지 않습니다. <code>roster.yaml</code>을 고치고 커밋한 뒤
+          재시작하면 반영됩니다 — 누구에게 어떤 uid를 줬는지의 기록이 곧 그 파일의 git 이력입니다.
+          팀 소속은 위에서 바로 바꿀 수 있고, 그 편집도 같은 파일에 한 줄로 남습니다.
         </p>
       </section>
+      )}
 
-      <Groups inv={inv} />
 
       {resetting && (
         <PasswordDialog
@@ -292,32 +313,126 @@ function explainDrift(code: string): string {
   }
 }
 
-function Groups({ inv }: { inv: Inventory | null }) {
-  if (!inv?.groups.length) return null
+/**
+ * Team membership, editable by whoever may.
+ *
+ * Driven by /api/teams, which returns only the teams the caller may change --
+ * all of them for an admin, theirs for an owner, none for anyone else. That is
+ * also why it does not read the inventory: an owner is not an administrator and
+ * cannot fetch it.
+ *
+ * The controls being drawn is a rendering decision. The server re-checks on
+ * every request, so a browser that lies to itself gains nothing.
+ */
+function Teams({
+  view,
+  onChanged,
+  onError,
+}: {
+  view: TeamsView | null
+  onChanged: () => void
+  onError: (message: string) => void
+}) {
+  const [busy, setBusy] = useState('')
+
+  if (!view?.teams.length) return null
+
+  async function setMember(team: string, user: string, member: boolean) {
+    setBusy(`${team}:${user}`)
+    try {
+      await api.setTeamMember(team, user, member)
+      onChanged()
+    } catch (e) {
+      onError(e instanceof Error ? e.message : '변경하지 못했습니다.')
+    } finally {
+      setBusy('')
+    }
+  }
+
   return (
     <section>
       <h2>팀</h2>
-      <table className="admin-table">
-        <thead>
-          <tr>
-            <th>이름</th>
-            <th className="num">gid</th>
-            <th>구성원</th>
-          </tr>
-        </thead>
-        <tbody>
-          {inv.groups.map((g) => (
-            <tr key={g.name}>
-              <td>{g.name}</td>
-              <td className="num muted">{g.gid}</td>
-              <td>
-                {g.members.length ? g.members.join(', ') : <span className="muted">비어 있음</span>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {view.teams.map((g) => {
+        const outside = view.users.filter((u) => !g.members.includes(u))
+        return (
+          <div className="team" key={g.name}>
+            <h3>
+              {g.name}
+              <span className="muted small"> gid {g.gid}</span>
+              {g.description && <span className="muted small"> · {g.description}</span>}
+            </h3>
+            {g.owners.length > 0 && (
+              <p className="muted small">관리자: {g.owners.join(', ')}</p>
+            )}
+            <ul className="members">
+              {g.members.length === 0 && <li className="muted">비어 있음</li>}
+              {g.members.map((m) => (
+                <li key={m}>
+                  {m}
+                  <button
+                    type="button"
+                    className="ghost tiny"
+                    disabled={busy === `${g.name}:${m}`}
+                    title={`${m}을(를) ${g.name}에서 제외`}
+                    onClick={() => void setMember(g.name, m, false)}
+                  >
+                    제외
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {outside.length > 0 && (
+              <AddMember
+                team={g.name}
+                candidates={outside}
+                busy={busy.startsWith(`${g.name}:`)}
+                onAdd={(user) => void setMember(g.name, user, true)}
+              />
+            )}
+          </div>
+        )
+      })}
+      <p className="muted small">
+        팀 소속은 <code>roster.yaml</code>에 기록되고 바로 반영됩니다. 계정 생성·삭제와 uid는
+        여전히 손으로 고칩니다.
+      </p>
     </section>
+  )
+}
+
+function AddMember({
+  team,
+  candidates,
+  busy,
+  onAdd,
+}: {
+  team: string
+  candidates: string[]
+  busy: boolean
+  onAdd: (user: string) => void
+}) {
+  const [pick, setPick] = useState('')
+  return (
+    <form
+      className="add-member"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (pick) onAdd(pick)
+        setPick('')
+      }}
+    >
+      <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label={`${team}에 추가`}>
+        <option value="">추가할 사람…</option>
+        {candidates.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+      <button type="submit" className="ghost tiny" disabled={busy || !pick}>
+        추가
+      </button>
+    </form>
   )
 }
 

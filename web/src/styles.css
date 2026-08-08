@@ -472,3 +472,54 @@ dialog menu {
     min-width: 34rem;
   }
 }
+
+/* --- team membership --- */
+.team {
+  margin: 0 0 1rem;
+}
+.team h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 0.2rem;
+}
+.members {
+  list-style: none;
+  margin: 0.2rem 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.members li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.15rem 0.2rem 0.15rem 0.5rem;
+  font-size: 0.85rem;
+}
+/* A member with no remove button (the caller cannot manage this team) should
+   not keep the padding that made room for one. */
+.members li.muted {
+  border: none;
+  padding: 0.15rem 0;
+}
+.tiny {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.35rem;
+}
+.add-member {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+.add-member select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.15rem 0.3rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}

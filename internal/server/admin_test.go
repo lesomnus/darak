@@ -48,6 +48,16 @@ func adminHarness(t *testing.T) (*harness, *scriptRunner) {
 			"usersync export --format csv": "type,name,uid_number,gid_number,unix_home_directory,login_shell\nuser,alice,3001,3001,/homes/alice,/usr/sbin/nologin\nuser,bob,3002,3002,/homes/bob,/usr/sbin/nologin\n",
 			"pdbedit -L -v":                "Unix username:\talice\nAccount Flags:\t[U]\n\nUnix username:\tbob\nAccount Flags:\t[U]\n",
 			"usersync audit --json":        `{"findings":[]}`,
+			"usersync roster": `{"groups":[{"name":"team-a","gid":10001,"owners":["bob"]},` +
+				`{"name":"team-b","gid":10002,"owners":[]}],` +
+				`"users":[{"name":"alice","uid":3001,"groups":[],"status":"active"},` +
+				`{"name":"bob","uid":3002,"groups":["team-a"],"status":"active"},` +
+				`{"name":"carol","uid":3003,"groups":[],"status":"active"}]}`,
+			"usersync member add alice team-a":    "",
+			"usersync member add carol team-a":    "",
+			"usersync member add carol team-b":    "",
+			"usersync member remove alice team-a": "",
+			"usersync apply":                      "",
 		},
 		err: map[string]error{},
 	}
@@ -55,8 +65,13 @@ func adminHarness(t *testing.T) (*harness, *scriptRunner) {
 		Root:   base.root,
 		Runner: run,
 		Resolver: mapResolver{
+			// alice is an ADMIN (gid 2000) and owns no team.
 			"alice": {UID: 3001, GID: 3001, Groups: []uint32{3001, 2000}},
-			"bob":   {UID: 3002, GID: 3002, Groups: []uint32{3002}},
+			// bob OWNS team-a (see the roster fixture) and is not an admin. The
+			// two permissions are separate axes and the tests need both cases.
+			"bob": {UID: 3002, GID: 3002, Groups: []uint32{3002, 10001}},
+			// carol is neither, which is what most people are.
+			"carol": {UID: 3003, GID: 3003, Groups: []uint32{3003}},
 		},
 	})
 	if err != nil {
@@ -243,3 +258,97 @@ func TestAdminSurfaceAbsentWhenNotConfigured(t *testing.T) {
 }
 
 var _ = auth.ErrUnavailable
+
+// bob owns team-a in the harness but is NOT in the admin group. That is the
+// point: the two permissions are separate axes, and the team routes must let an
+// owner through without opening the operator page to them.
+func TestOwnerReachesTeamRoutesButNotTheAdminPage(t *testing.T) {
+	h, _ := adminHarness(t)
+	bob := h.login("bob")
+
+	rec := h.do("POST", "/api/teams/team-a/members", strings.NewReader(`{"user":"alice","member":true}`), bob)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("owner changing their own team = %d %s, want 204", rec.Code, rec.Body)
+	}
+
+	// ...and the operator page is still closed to him.
+	for _, rt := range adminRoutes {
+		if rec := h.do(rt.method, rt.path, strings.NewReader(rt.body), bob); rec.Code != http.StatusNotFound {
+			t.Errorf("owner reached %s %s = %d, want 404", rt.method, rt.path, rec.Code)
+		}
+	}
+}
+
+// An owner is refused on a team they do not own, with 404 rather than 403 —
+// a signed-in stranger learns nothing about which teams exist.
+func TestOwnerIsRefusedOnAnotherTeam(t *testing.T) {
+	h, run := adminHarness(t)
+	bob := h.login("bob")
+
+	rec := h.do("POST", "/api/teams/team-b/members", strings.NewReader(`{"user":"alice","member":true}`), bob)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("owner on another team = %d %s, want 404", rec.Code, rec.Body)
+	}
+	for _, c := range run.calls {
+		if strings.Contains(c, "team-b") && strings.HasPrefix(c, "usersync member") {
+			t.Errorf("the refusal still ran %q", c)
+		}
+	}
+}
+
+// carol is neither an admin nor an owner -- what most people are.
+func TestNonOwnerIsRefusedOnTeamRoutes(t *testing.T) {
+	h, _ := adminHarness(t)
+	carol := h.login("carol")
+
+	for _, team := range []string{"team-a", "team-b"} {
+		rec := h.do("POST", "/api/teams/"+team+"/members", strings.NewReader(`{"user":"bob","member":true}`), carol)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("non-owner on %s = %d, want 404", team, rec.Code)
+		}
+	}
+}
+
+// An ADMIN may manage any team, including ones they do not own. alice owns
+// nothing here and is in the admin group.
+func TestAdminReachesAnyTeamRoute(t *testing.T) {
+	h, _ := adminHarness(t)
+	alice := h.login("alice")
+
+	for _, team := range []string{"team-a", "team-b"} {
+		rec := h.do("POST", "/api/teams/"+team+"/members", strings.NewReader(`{"user":"carol","member":true}`), alice)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("admin on %s = %d %s, want 204", team, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestTeamRoutesRequireASession(t *testing.T) {
+	h, _ := adminHarness(t)
+
+	rec := h.do("POST", "/api/teams/team-a/members", strings.NewReader(`{"user":"alice","member":true}`), nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("signed out = %d, want 401", rec.Code)
+	}
+}
+
+// Every signed-in user may ask which teams they own; most own none.
+func TestTeamWhoamiIsOpenToEveryone(t *testing.T) {
+	h, _ := adminHarness(t)
+
+	for user, want := range map[string]int{"bob": 1, "alice": 0, "carol": 0} {
+		rec := h.do("GET", "/api/teams/whoami", nil, h.login(user))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("whoami as %s = %d", user, rec.Code)
+		}
+		var got struct {
+			Teams []string `json:"teams"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Teams) != want {
+			t.Errorf("teams for %s = %v, want %d", user, got.Teams, want)
+		}
+	}
+}

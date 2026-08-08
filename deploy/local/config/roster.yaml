@@ -13,9 +13,11 @@ groups:
   - name: team-a
     gid: 10001
     description: Perception team
+    owners: [bob]              # may add/remove members from the web page
   - name: team-b
     gid: 10002
     description: Planning team
+    owners: [carol]
 
 users:
   - name: alice

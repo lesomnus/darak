@@ -100,6 +100,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/audit", s.authed(s.adminOnly(s.handleAdminAudit)))
 	mux.HandleFunc("POST /api/admin/users/", s.authed(s.adminOnly(s.handleAdminUserOp)))
 
+	// Team ownership is a separate axis from the admin group: an owner may
+	// change their own team's membership and nothing else, so these are gated
+	// per-team inside the handler rather than by adminOnly.
+	mux.HandleFunc("GET /api/teams", s.authed(s.handleTeams))
+	mux.HandleFunc("GET /api/teams/whoami", s.authed(s.handleTeamWhoami))
+	mux.HandleFunc("POST /api/teams/", s.authed(s.handleTeamMembers))
+
 	// The public side takes no session: the URL is the credential.
 	mux.HandleFunc("GET /s/", s.handleSharePublic)
 	mux.HandleFunc("POST /s/", s.handleSharePublic)

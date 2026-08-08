@@ -140,3 +140,81 @@ func (s *Server) handleAdminUserOp(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+// --- team membership ---
+//
+// A different gate from adminOnly. The operator page is for administrators; a
+// team owner is not one and must not reach the rest of it, so these routes
+// authorize per-team rather than per-role.
+
+// handleTeamWhoami tells a signed-in user which teams they may manage. Authed
+// but not gated: the answer for most people is an empty list, and it is what
+// lets the interface decide whether to offer anything at all.
+func (s *Server) handleTeamWhoami(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Admin == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"teams": []string{}})
+		return
+	}
+	teams, err := s.cfg.Admin.OwnedTeams(r.Context(), userOf(r))
+	if err != nil {
+		// Not an error to the caller: they own nothing we can confirm right now,
+		// and every route behind this re-checks anyway.
+		writeJSON(w, http.StatusOK, map[string]any{"teams": []string{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"teams": teams})
+}
+
+// handleTeams lists the teams the caller may change, with their membership.
+// Drives the team panel for an owner, who cannot read the full inventory.
+func (s *Server) handleTeams(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Admin == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"teams": []any{}, "users": []string{}})
+		return
+	}
+	view, err := s.cfg.Admin.ManageableTeams(r.Context(), userOf(r))
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "could not read the teams: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+// handleTeamMembers changes one membership.
+//
+//	POST /api/teams/<team>/members  {"user": "...", "member": true|false}
+func (s *Server) handleTeamMembers(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Admin == nil {
+		http.NotFound(w, r)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/teams/")
+	team, tail, ok := strings.Cut(rest, "/")
+	if !ok || tail != "members" || team == "" {
+		writeError(w, http.StatusBadRequest, "expected /api/teams/<team>/members")
+		return
+	}
+
+	var body struct {
+		User   string `json:"user"`
+		Member *bool  `json:"member"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil || body.Member == nil {
+		writeError(w, http.StatusBadRequest, "expected {\"user\": \"...\", \"member\": true|false}")
+		return
+	}
+
+	err := s.cfg.Admin.SetTeamMembership(r.Context(), userOf(r), team, body.User, *body.Member)
+	switch {
+	case errors.Is(err, admin.ErrNotOwner):
+		// 404, like the admin routes: a signed-in stranger learns nothing about
+		// which teams exist or who owns them.
+		http.NotFound(w, r)
+	case errors.Is(err, admin.ErrUnknownUser):
+		writeError(w, http.StatusNotFound, "no such managed account")
+	case err != nil:
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}

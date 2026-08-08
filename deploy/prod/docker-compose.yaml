@@ -20,7 +20,7 @@ services:
       args:
         # Empty means the Dockerfile's pinned commit. See .env.example and
         # deploy/prod/README.md for why it is a commit and not a tag yet.
-        USERSYNC_VERSION: ${USERSYNC_VERSION:-2e96cb143269436bc28e901be016dd8ebe50db92}
+        USERSYNC_VERSION: ${USERSYNC_VERSION:-b0fe5b8da659bc0bd542289e4f8dfabfafcbb231}
     image: darak:${DARAK_VERSION:-local}
 
     # Root inside the container: starting a helper AS the requesting user is the
@@ -54,10 +54,24 @@ services:
       # is the one that later becomes a shared filesystem.
       - state:/var/lib/darak
 
-      # The roster and its operational config, read-only. This is the input the
-      # accounts are made from, and the container has no business editing it —
-      # it is version-controlled elsewhere and that is where changes belong.
-      - ${DARAK_CONFIG:-./config}:/etc/darak:ro
+      # The roster and its operational config. WRITABLE, which it was not.
+      #
+      # It was read-only on the reasoning that the roster is a reviewed input and
+      # the container has no business editing it. That reasoning still holds for
+      # everything the roster decides: who exists, what uid they have, whether a
+      # number is retired. None of that is writable from here.
+      #
+      # What changed is one narrow case. A team owner adding a member is a
+      # decision the roster already delegates to them (`groups[].owners`), and it
+      # is the one account change frequent enough that routing it through a
+      # commit and a restart means it does not happen. darak edits ONLY
+      # `users[].groups`, through `usersync member`, which validates before it
+      # writes and preserves the file's comments and layout so the change is
+      # still reviewable as a one-line diff. See nas-design.md ADR-10.
+      #
+      # Keep this directory in version control anyway. Nothing enforces that,
+      # and the history is still the record.
+      - ${DARAK_CONFIG:-./config}:/etc/darak
 
       # The seed usersync derives initial passwords from. Read-only, and kept
       # apart from the roster so it is not committed by accident.

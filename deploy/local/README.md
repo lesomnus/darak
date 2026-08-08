@@ -140,3 +140,22 @@ layout 루트 생성 → smb.conf 전역 섹션 seed → usersync validate → p
 roster에는 `status: disabled`(erin)와 `status: reserved`(frank)가 하나씩 들어 있습니다.
 전자는 SMB만 잠기고 홈과 uid가 남으며, 후자는 계정이 없고 uid 3006만 예약됩니다 — 둘 다
 users.conf 시절에는 표현할 수 없어 검증되지 않던 상태입니다.
+
+## 팀 소유자
+
+`config/roster.yaml`에서 팀별로 지정합니다. 로컬 스택은 bob이 team-a, carol이 team-b입니다.
+
+```yaml
+groups:
+  - name: team-a
+    gid: 10001
+    owners: [bob]
+```
+
+bob으로 로그인하면 **팀** 버튼이 보이고 team-a의 구성원만 바꿀 수 있습니다 — team-b도, 운영
+페이지의 나머지도 404입니다. alice는 `admin` 그룹이라 모든 팀을 바꿀 수 있지만 소유자는 아닙니다.
+dave는 둘 다 아니라 버튼 자체가 없습니다.
+
+구성원을 바꾸면 `roster.yaml`이 그 자리에서 편집되고(한 줄), `usersync apply`가 바로 돌아
+`id dave`와 SMB 접근에 즉시 반영됩니다. `docker compose` 사용 시 `deploy/local/config/`는 쓰기
+가능하게 마운트되므로 호스트의 파일이 실제로 바뀝니다 — 편집 결과를 그대로 확인할 수 있습니다.

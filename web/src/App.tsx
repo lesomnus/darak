@@ -21,6 +21,10 @@ export function App() {
   // this only decides whether a link is drawn -- a browser that lies to itself
   // reaches nothing it could not reach anyway.
   const [isAdmin, setIsAdmin] = useState(false)
+  // Teams this person may change the membership of. Admins get all of them,
+  // owners get theirs. Same rule as isAdmin: it decides what is DRAWN, and the
+  // server decides what works.
+  const [myTeams, setMyTeams] = useState<string[]>([])
 
   // A live session goes straight in, so a reload does not ask again.
   useEffect(() => {
@@ -41,6 +45,10 @@ export function App() {
       .adminWhoami()
       .then((r) => !cancelled && setIsAdmin(r.admin))
       .catch(() => !cancelled && setIsAdmin(false))
+    api
+      .teamWhoami()
+      .then((r) => !cancelled && setMyTeams(r.teams))
+      .catch(() => !cancelled && setMyTeams([]))
     return () => {
       cancelled = true
     }
@@ -60,6 +68,7 @@ export function App() {
     }
     setSession({ state: 'out' })
     setIsAdmin(false)
+    setMyTeams([])
     navigate('')
   }
 
@@ -78,13 +87,13 @@ export function App() {
         </button>
         <Breadcrumbs path={path} user={user} onNavigate={navigate} />
         <span className="spacer" />
-        {isAdmin && (
+        {(isAdmin || myTeams.length > 0) && (
           <button
             type="button"
             className="ghost"
             onClick={() => navigate(path === ADMIN_PATH ? '' : ADMIN_PATH)}
           >
-            {path === ADMIN_PATH ? '파일로' : '관리'}
+            {path === ADMIN_PATH ? '파일로' : isAdmin ? '관리' : '팀'}
           </button>
         )}
         <button type="button" className="ghost" onClick={() => setShowShares(true)}>
@@ -106,8 +115,8 @@ export function App() {
         // Rendered only when the server said so. If it did not, the panels
         // inside would each 404 -- which is the same answer a non-admin gets
         // for the API, so nothing is disclosed by trying.
-        isAdmin ? (
-          <Admin me={user} onError={report} />
+        isAdmin || myTeams.length > 0 ? (
+          <Admin me={user} isAdmin={isAdmin} onError={report} />
         ) : (
           <Start user={user} onNavigate={navigate} />
         )

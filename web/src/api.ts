@@ -6,6 +6,8 @@ import {
   type Inventory,
   type Listing,
   type Me,
+  type TeamsView,
+  type TeamWhoami,
   type ShareLink,
 } from './types'
 
@@ -137,5 +139,20 @@ export const api = {
     request<void>(`/api/admin/users/${encodeURIComponent(user)}/password`, {
       method: 'POST',
       body: { password },
+    }),
+
+  // --- team ownership ---
+  //
+  // A separate axis from the admin group: an owner may change their own team's
+  // membership and nothing else. Every signed-in user may ask what they own;
+  // the answer for most is an empty list.
+  teamWhoami: () => request<TeamWhoami>('/api/teams/whoami'),
+
+  teams: (signal?: AbortSignal) => request<TeamsView>('/api/teams', { signal }),
+
+  setTeamMember: (team: string, user: string, member: boolean) =>
+    request<void>(`/api/teams/${encodeURIComponent(team)}/members`, {
+      method: 'POST',
+      body: { user, member },
     }),
 }

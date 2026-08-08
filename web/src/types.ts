@@ -136,3 +136,23 @@ export interface DriftReport {
   /** Set only when usersync EXISTS and could not answer. */
   error?: string
 }
+
+/** Which teams the signed-in user may manage the membership of. */
+export interface TeamWhoami {
+  teams: string[]
+}
+
+export interface TeamView {
+  name: string
+  gid: number
+  description?: string
+  owners: string[]
+  members: string[]
+}
+
+/** What the team panel renders from. Available to owners, who cannot read the
+ *  full inventory. */
+export interface TeamsView {
+  teams: TeamView[]
+  users: string[]
+}

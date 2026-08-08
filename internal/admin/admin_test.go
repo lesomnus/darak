@@ -418,3 +418,165 @@ func contains(ss []string, want string) bool {
 	}
 	return false
 }
+
+const declJSON = `{
+  "groups": [
+    {"name":"team-a","gid":10001,"owners":["alice"]},
+    {"name":"team-b","gid":10002,"owners":[]}
+  ],
+  "users": [
+    {"name":"alice","uid":3001,"groups":["team-a"],"status":"active"},
+    {"name":"bob","uid":3002,"groups":[],"status":"active"},
+    {"name":"carol","uid":3003,"groups":["team-b"],"status":"active"}
+  ]
+}`
+
+func teamFixture() (*fakeRunner, fakeResolver) {
+	r, res := inventoryFixture()
+	r.out["usersync roster"] = declJSON
+	r.out["usersync member add bob team-a"] = ""
+	r.out["usersync member remove alice team-a"] = ""
+	r.out["usersync apply"] = ""
+	// carol is neither an admin nor an owner.
+	res["carol"] = helperpool.Creds{UID: 3003, GID: 3003, Groups: []uint32{3003, 10002}}
+	return r, res
+}
+
+// Owner and admin are separate axes. alice owns team-a AND is in the admin
+// group in this fixture; bob is an admin in no sense; carol is neither.
+func TestOwnedTeamsComesFromTheDeclaration(t *testing.T) {
+	r, res := teamFixture()
+	a := newTestAdmin(t, r, res)
+
+	for user, want := range map[string][]string{
+		"alice": {"team-a"},
+		"bob":   {},
+		"carol": {},
+	} {
+		got, err := a.OwnedTeams(context.Background(), user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(want) || (len(want) > 0 && got[0] != want[0]) {
+			t.Errorf("OwnedTeams(%q) = %v, want %v", user, got, want)
+		}
+	}
+}
+
+// An owner may change their own team and nothing else. This is the boundary the
+// whole feature rests on, so both halves are asserted.
+func TestOwnerMayManageOnlyTheirOwnTeam(t *testing.T) {
+	r, res := teamFixture()
+	// alice owns team-a but is NOT an admin here, so the admin path cannot be
+	// what lets her through.
+	res["alice"] = helperpool.Creds{UID: 3001, GID: 3001, Groups: []uint32{3001, 10001}}
+	a := newTestAdmin(t, r, res)
+
+	if err := a.SetTeamMembership(context.Background(), "alice", "team-a", "bob", true); err != nil {
+		t.Fatalf("owner refused on their own team: %v", err)
+	}
+	if !contains(r.calls, "usersync member add bob team-a") {
+		t.Errorf("calls = %v, want the member edit", r.calls)
+	}
+	// And it converged, rather than leaving the change to the next restart.
+	if !contains(r.calls, "usersync apply") {
+		t.Errorf("calls = %v, want an apply after the edit", r.calls)
+	}
+
+	err := a.SetTeamMembership(context.Background(), "alice", "team-b", "bob", true)
+	if !errors.Is(err, ErrNotOwner) {
+		t.Errorf("alice on team-b = %v, want ErrNotOwner", err)
+	}
+	for _, c := range r.calls {
+		if strings.Contains(c, "team-b") {
+			t.Errorf("the refusal still ran %q", c)
+		}
+	}
+}
+
+// Someone who owns nothing is refused everywhere.
+func TestNonOwnerIsRefused(t *testing.T) {
+	r, res := teamFixture()
+	a := newTestAdmin(t, r, res)
+
+	for _, team := range []string{"team-a", "team-b"} {
+		if err := a.SetTeamMembership(context.Background(), "carol", team, "bob", true); !errors.Is(err, ErrNotOwner) {
+			t.Errorf("carol on %s = %v, want ErrNotOwner", team, err)
+		}
+	}
+}
+
+// An admin may manage any team: withholding this one operation from the person
+// who can already reset everyone's password is a distinction without a
+// difference.
+func TestAdminMayManageAnyTeam(t *testing.T) {
+	r, res := teamFixture()
+	// gid 2000 is the admin group (see the getent fixture). bob owns no team.
+	res["bob"] = helperpool.Creds{UID: 3002, GID: 3002, Groups: []uint32{3002, 2000}}
+	a := newTestAdmin(t, r, res)
+
+	if owned, _ := a.OwnedTeams(context.Background(), "bob"); len(owned) != 0 {
+		t.Fatalf("bob owns %v; the fixture no longer isolates the admin path", owned)
+	}
+	for _, team := range []string{"team-a", "team-b"} {
+		if ok, err := a.MayManageTeam(context.Background(), "bob", team); err != nil || !ok {
+			t.Errorf("admin on %s = %v (err %v), want true", team, ok, err)
+		}
+	}
+}
+
+// The declaration is read from the ROSTER, never from gshadow. Otherwise anyone
+// who could write gshadow could grant themselves the delegation.
+func TestOwnershipIsReadFromTheRosterNotTheSystem(t *testing.T) {
+	r, res := teamFixture()
+	a := newTestAdmin(t, r, res)
+
+	if _, err := a.OwnedTeams(context.Background(), "alice"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.calls {
+		if strings.Contains(c, "gshadow") || strings.Contains(c, "gpasswd") {
+			t.Errorf("ownership was decided by %q", c)
+		}
+	}
+	if !contains(r.calls, "usersync roster") {
+		t.Errorf("calls = %v, want `usersync roster`", r.calls)
+	}
+}
+
+// A name the roster does not declare is refused before anything runs.
+func TestUnknownTargetUserIsRefused(t *testing.T) {
+	r, res := teamFixture()
+	a := newTestAdmin(t, r, res)
+
+	if err := a.SetTeamMembership(context.Background(), "alice", "team-a", "nobody", true); !errors.Is(err, ErrUnknownUser) {
+		t.Errorf("target nobody = %v, want ErrUnknownUser", err)
+	}
+	for _, c := range r.calls {
+		if strings.HasPrefix(c, "usersync member") {
+			t.Errorf("the refusal still ran %q", c)
+		}
+	}
+}
+
+// A failed apply must not be reported as success, and must not undo the roster
+// edit: the declaration now says the right thing, so the recovery is another
+// apply rather than putting it back to something nobody asked for.
+func TestApplyFailureIsReportedAndNotRolledBack(t *testing.T) {
+	r, res := teamFixture()
+	r.err["usersync apply"] = errors.New("exit status 1: useradd busy")
+	a := newTestAdmin(t, r, res)
+
+	err := a.SetTeamMembership(context.Background(), "alice", "team-a", "bob", true)
+	if err == nil {
+		t.Fatal("a failed apply was reported as success")
+	}
+	if !strings.Contains(err.Error(), "usersync apply") {
+		t.Errorf("error = %v, want it to name the recovery", err)
+	}
+	for _, c := range r.calls {
+		if strings.Contains(c, "member remove bob team-a") {
+			t.Error("the edit was rolled back")
+		}
+	}
+}

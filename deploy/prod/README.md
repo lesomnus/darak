@@ -17,7 +17,7 @@ docker compose up -d --build
 usersync는 아직 태그된 릴리즈가 없어서 **커밋 해시**로 고정합니다:
 
 ```
-USERSYNC_VERSION=2e96cb143269436bc28e901be016dd8ebe50db92
+USERSYNC_VERSION=b0fe5b8da659bc0bd542289e4f8dfabfafcbb231
 ```
 
 `lesomnus/usersync`의 `main` HEAD입니다. 올릴 때는 그 저장소에서 `git rev-parse HEAD`를
@@ -57,13 +57,30 @@ DARAK_ADMIN_MEMBERS=skim,jlee
 - `DARAK_ADMIN_GID`(기본 2000)는 **첫 기동 전에만** 바꾸세요. 이 gid는 파일에 남지는 않지만,
   번호가 움직이면 그 안에 있던 사람들을 더 이상 가리키지 않습니다.
 
-할 수 있는 일은 **roster를 바꾸지 않는 것까지**입니다(근거는 [ADR-10](../../nas-design.md)):
-
 | | |
 |---|---|
 | 조회 | 사용자·팀, uid/gid, SMB 상태, 디스크 용량, 사용자별 사용량, `usersync audit` 결과 |
-| 변경 | SMB 계정 잠금/해제, SMB 비밀번호 재설정 (둘 다 tdbsam만) |
-| **불가** | 계정 생성·삭제, uid 변경, 팀 배정 — `roster.yaml`을 고쳐 커밋하고 재시작하세요 |
+| 변경 | SMB 계정 잠금/해제, SMB 비밀번호 재설정 (둘 다 tdbsam만), **모든 팀의 구성원** |
+| **불가** | 계정 생성·삭제, uid 변경, `status` 변경, 소유자 지정 — `roster.yaml`을 고쳐 커밋하고 재시작하세요 |
+
+## 팀 소유자
+
+관리자와는 **다른 축**입니다. roster에서 팀별로 지정하고, 그 사람은 **자기 팀의 구성원 추가·제외만**
+할 수 있습니다. 운영 페이지의 나머지는 못 봅니다.
+
+```yaml
+groups:
+  - name: team-a
+    gid: 10001
+    owners: [skim]      # POSIX: /etc/gshadow 관리자 필드에 반영됨
+```
+
+관리자라고 자동으로 소유자가 되지는 않습니다. 어떤 팀을 실제로 운영하는 관리자는 다른 사람과
+똑같이 `owners`에 적으세요 — 그러지 않으면 "이 팀은 누가 책임지나"에 답할 수 없습니다.
+
+소유자가 웹에서 구성원을 바꾸면 `usersync member`가 `roster.yaml`의 해당 **한 줄만** 고치고
+(주석·서식 보존, 쓰기 전 검증, 파일 잠금), 이어서 `usersync apply`가 동기로 돌아 바로 반영됩니다.
+근거는 [ADR-10](../../nas-design.md).
 
 사용자별 사용량은 백그라운드에서 잽니다(`-usage-interval`, 기본 30분). ZFS면 `zfs userspace`가
 즉답하고, 아니면 트리를 한 번 순회합니다. 페이지는 마지막 측정값을 잰 시각과 함께 보여줍니다.
@@ -100,7 +117,9 @@ docker compose exec darak sh -c 'cd /etc/darak && usersync plan'
 docker compose exec darak sh -c 'cd /etc/darak && usersync apply && usersync shares --write && smbcontrol smbd reload-config'
 ```
 
-> `/etc/darak`는 읽기 전용으로 마운트됩니다. roster는 버전관리되는 곳에서 고치고, 컨테이너가 편집하지 않습니다.
+> `/etc/darak`는 **쓰기 가능**합니다. darak이 팀 소유자를 대신해 `users[].groups`만 편집하기
+> 때문입니다(`usersync member` 경유, 쓰기 전 검증, 주석·서식 보존). 계정 생성·uid·`status`는
+> 여전히 손편집이고, 그 디렉터리는 계속 버전관리하에 두세요 — 강제되지는 않지만 이력이 곧 기록입니다.
 
 **은퇴자는 지우지 말고 `status: disabled` 또는 `reserved`로 남기세요.** 지우면 uid 예약이 풀리고, 볼륨에는 그 번호로 된 파일이 남아 있습니다. 여기서는 그게 사고입니다.
 
