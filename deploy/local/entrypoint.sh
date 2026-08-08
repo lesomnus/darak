@@ -16,6 +16,8 @@ DATA_ROOT=${DARAK_ROOT:-/srv/data}
 USERS_CONF=${DARAK_USERS:-/etc/darak/users.conf}
 DEFAULT_PASSWORD=${DARAK_DEFAULT_PASSWORD:-darak}
 STATE_DIR=${DARAK_STATE:-/var/lib/darak}
+ADMIN_GROUP=${DARAK_ADMIN_GROUP:-admin}
+ADMIN_GID=${DARAK_ADMIN_GID:-2000}
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
@@ -44,6 +46,30 @@ ensure_user() { # name uid groups
 	# Supplementary groups are replaced, not added to, so this file is the whole
 	# truth about team membership.
 	usermod -G "$groups" "$name"
+}
+
+# The operator group is NOT a `group` line in users.conf, because a group line
+# also makes a team folder and an SMB share -- and being allowed to manage
+# accounts should not conjure a shared directory. It is created here at a gid
+# below the managed band and applied after every user's supplementary groups
+# have been set, since ensure_user REPLACES that set.
+ensure_admin_group() {
+	[[ -n $ADMIN_GROUP ]] || return 0
+	getent group "$ADMIN_GROUP" >/dev/null || groupadd -g "$ADMIN_GID" "$ADMIN_GROUP"
+	local any=0
+	while read -r kind rest; do
+		[[ $kind == admin ]] || continue
+		for name in $rest; do
+			if ! getent passwd "$name" >/dev/null; then
+				echo "WARNING: admin $name is not an account in $USERS_CONF; skipping" >&2
+				continue
+			fi
+			usermod -aG "$ADMIN_GROUP" "$name"
+			log "  $name is an operator"
+			any=1
+		done
+	done < <(config_lines)
+	[[ $any == 1 ]] || echo "note: no 'admin' line in $USERS_CONF, so nobody can reach the operator page" >&2
 }
 
 ensure_smb_password() { # name
@@ -157,14 +183,26 @@ start_samba() {
 
 # --- go ---------------------------------------------------------------------
 
+# A missing file is not "no accounts": it means the mount is wrong, and every
+# step after this would quietly do nothing while the stack still came up and
+# refused every login for reasons that look like anything but a bad path.
+[[ -f $USERS_CONF ]] || {
+	printf '\033[1;31mfatal:\033[0m no account file at %s -- is deploy/local/users.conf mounted?\n' "$USERS_CONF" >&2
+	exit 1
+}
+
 log "accounts from $USERS_CONF"
 while read -r kind name id extra; do
 	case "$kind" in
 	group) ensure_group "$name" "$id" ;;
 	user) ensure_user "$name" "$id" "${extra:-}" ;;
+	admin) ;; # applied below, after every user's group set is final
 	*) echo "ignoring unknown line: $kind $name" >&2 ;;
 	esac
 done < <(config_lines)
+
+log "operator group ($ADMIN_GROUP)"
+ensure_admin_group
 
 log "layout under $DATA_ROOT"
 ensure_layout
@@ -199,5 +237,6 @@ exec /usr/local/bin/darak \
 	-root "$DATA_ROOT" \
 	-helper /usr/local/bin/darak-helper \
 	-shares "$STATE_DIR/shares.json" \
+	-admin-group "$ADMIN_GROUP" \
 	-secure-cookies=false \
 	"$@"

@@ -92,7 +92,19 @@ const localStateMarker = "//darak:local-state"
 
 // maxExempt bounds how many files may carry the marker. An exemption mechanism
 // with no ceiling becomes the rule it was an exception to.
-const maxExempt = 2
+//
+// Raising it is meant to be an argument, not a formality. The three today:
+//
+//	internal/share/file.go       the share-link store, at an operator-given path
+//	internal/helperpool/idmap.go /proc/self/uid_map, the process asking about itself
+//	internal/admin/disk.go       statfs on the -root flag, for the capacity report
+//
+// The last one is the only one that touches the served tree at all, and it
+// touches it as a whole: it returns block counts for the filesystem and cannot
+// be aimed by a request, because the path is the flag. Anything that reads a
+// user's file, or resolves a name a request supplied, does not qualify however
+// convenient the marker would be -- that is the case the helper exists for.
+const maxExempt = 3
 
 func repoRoot(t *testing.T) string {
 	t.Helper()

@@ -1,0 +1,311 @@
+package admin
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/lesomnus/darak/internal/helperpool"
+)
+
+// fakeRunner answers a fixed script of commands, and records what it was asked.
+type fakeRunner struct {
+	out   map[string]string
+	err   map[string]error
+	calls []string
+	stdin []string
+}
+
+func (f *fakeRunner) Run(ctx context.Context, stdin, name string, args ...string) (string, error) {
+	key := strings.TrimSpace(name + " " + strings.Join(args, " "))
+	f.calls = append(f.calls, key)
+	f.stdin = append(f.stdin, stdin)
+	if err, ok := f.err[key]; ok {
+		return f.out[key], err
+	}
+	return f.out[key], nil
+}
+
+type fakeResolver map[string]helperpool.Creds
+
+func (f fakeResolver) Resolve(ctx context.Context, user string) (helperpool.Creds, error) {
+	c, ok := f[user]
+	if !ok {
+		return helperpool.Creds{}, errors.New("no such user")
+	}
+	return c, nil
+}
+
+func newTestAdmin(t *testing.T, r *fakeRunner, res fakeResolver) *Admin {
+	t.Helper()
+	a, err := New(Config{Root: "/srv/data", Runner: r, Resolver: res})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func TestIsAdminUsesPOSIXGroupMembership(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{"getent group admin": "admin:x:2000:root\n"}}
+	res := fakeResolver{
+		"alice": {UID: 3001, GID: 3001, Groups: []uint32{3001, 2000, 10001}},
+		"bob":   {UID: 3002, GID: 3002, Groups: []uint32{3002, 10001}},
+		// Someone whose PRIMARY group is admin is just as much an admin.
+		"carol": {UID: 3003, GID: 2000, Groups: []uint32{2000}},
+	}
+	a := newTestAdmin(t, r, res)
+
+	for _, tt := range []struct {
+		user string
+		want bool
+	}{
+		{"alice", true},
+		{"bob", false},
+		{"carol", true},
+	} {
+		got, err := a.IsAdmin(context.Background(), tt.user)
+		if err != nil {
+			t.Fatalf("IsAdmin(%q): %v", tt.user, err)
+		}
+		if got != tt.want {
+			t.Errorf("IsAdmin(%q) = %v, want %v", tt.user, got, tt.want)
+		}
+	}
+}
+
+// A missing admin group must mean "nobody", never "everybody". Failing open
+// here would turn "the operator has not made the group yet" into an open API.
+func TestIsAdminFailsClosedWhenGroupIsAbsent(t *testing.T) {
+	r := &fakeRunner{
+		out: map[string]string{"getent group admin": ""},
+		err: map[string]error{"getent group admin": errors.New("exit status 2")},
+	}
+	res := fakeResolver{"alice": {UID: 3001, GID: 3001, Groups: []uint32{3001}}}
+
+	got, err := newTestAdmin(t, r, res).IsAdmin(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("a missing group is an answer, not an error: %v", err)
+	}
+	if got {
+		t.Error("IsAdmin = true with no admin group on the system")
+	}
+}
+
+// Membership is re-read per call. A twelve-hour session must not outlive the
+// authorization it was granted under.
+func TestIsAdminIsNotCached(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{"getent group admin": "admin:x:2000:\n"}}
+	res := fakeResolver{"alice": {UID: 3001, GID: 3001, Groups: []uint32{3001, 2000}}}
+	a := newTestAdmin(t, r, res)
+
+	if ok, _ := a.IsAdmin(context.Background(), "alice"); !ok {
+		t.Fatal("alice should start as an admin")
+	}
+	res["alice"] = helperpool.Creds{UID: 3001, GID: 3001, Groups: []uint32{3001}}
+	if ok, _ := a.IsAdmin(context.Background(), "alice"); ok {
+		t.Error("alice is still an admin after losing the group; the check is cached")
+	}
+}
+
+const exportCSV = `type,name,uid_number,gid_number,unix_home_directory,login_shell
+group,team-a,10001,10001,,
+user,alice,3001,3001,/research/home/alice,/usr/sbin/nologin
+user,bob,3002,3002,/research/home/bob,/usr/sbin/nologin
+`
+
+func inventoryFixture() (*fakeRunner, fakeResolver) {
+	r := &fakeRunner{out: map[string]string{
+		"getent group admin":           "admin:x:2000:\n",
+		"usersync export --format csv": exportCSV,
+		"pdbedit -L -v":                "Unix username:        alice\nAccount Flags:        [U          ]\n\nUnix username:        bob\nAccount Flags:        [DU         ]\n",
+	}, err: map[string]error{}}
+	res := fakeResolver{
+		"alice": {UID: 3001, GID: 3001, Groups: []uint32{3001, 10001}},
+		"bob":   {UID: 3002, GID: 3002, Groups: []uint32{3002}},
+	}
+	return r, res
+}
+
+func TestInventoryReportsAccountsGroupsAndSMBState(t *testing.T) {
+	r, res := inventoryFixture()
+	inv, err := newTestAdmin(t, r, res).Inventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(inv.Users) != 2 {
+		t.Fatalf("users = %d, want 2", len(inv.Users))
+	}
+	alice, bob := inv.Users[0], inv.Users[1]
+	if alice.Name != "alice" || alice.UID != 3001 || alice.Home != "/research/home/alice" {
+		t.Errorf("alice = %+v", alice)
+	}
+	// The UPG must not show up as a team; it is an implementation detail of the
+	// account, not a group anyone joined.
+	if len(alice.Groups) != 1 || alice.Groups[0] != "team-a" {
+		t.Errorf("alice groups = %v, want [team-a]", alice.Groups)
+	}
+	if alice.SMB == nil || !alice.SMB.Enabled {
+		t.Errorf("alice SMB = %+v, want enabled", alice.SMB)
+	}
+	if bob.SMB == nil || bob.SMB.Enabled {
+		t.Errorf("bob SMB = %+v, want disabled (the D flag)", bob.SMB)
+	}
+
+	if len(inv.Groups) != 1 || inv.Groups[0].Name != "team-a" {
+		t.Fatalf("groups = %+v", inv.Groups)
+	}
+	if len(inv.Groups[0].Members) != 1 || inv.Groups[0].Members[0] != "alice" {
+		t.Errorf("team-a members = %v, want [alice]", inv.Groups[0].Members)
+	}
+}
+
+// pdbedit being unavailable must read as "unknown", not as "no SMB account" --
+// otherwise the page shows everyone locked out and sends someone to fix a
+// problem that does not exist.
+func TestInventoryDistinguishesUnknownSMBFromAbsent(t *testing.T) {
+	r, res := inventoryFixture()
+	r.err["pdbedit -L -v"] = errors.New("exec: pdbedit: not found")
+
+	inv, err := newTestAdmin(t, r, res).Inventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range inv.Users {
+		if u.SMB != nil {
+			t.Errorf("%s SMB = %+v, want nil when Samba could not be asked", u.Name, u.SMB)
+		}
+	}
+	if len(inv.Warnings) == 0 {
+		t.Error("no warning explaining why SMB state is missing")
+	}
+}
+
+func TestSetSMBEnabledRunsSmbpasswd(t *testing.T) {
+	r, res := inventoryFixture()
+	a := newTestAdmin(t, r, res)
+
+	if err := a.SetSMBEnabled(context.Background(), "bob", true); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(r.calls, "smbpasswd -e bob") {
+		t.Errorf("calls = %v, want an `smbpasswd -e bob`", r.calls)
+	}
+}
+
+// The admin group must not be a general-purpose Samba console. Only accounts
+// this server manages are addressable.
+func TestOpsRefuseUnmanagedNames(t *testing.T) {
+	r, res := inventoryFixture()
+	a := newTestAdmin(t, r, res)
+
+	for _, name := range []string{"root", "nobody", "alice/../root", "alice bob", ""} {
+		if err := a.SetSMBEnabled(context.Background(), name, false); !errors.Is(err, ErrUnknownUser) {
+			t.Errorf("SetSMBEnabled(%q) = %v, want ErrUnknownUser", name, err)
+		}
+		if err := a.SetSMBPassword(context.Background(), name, "pw"); !errors.Is(err, ErrUnknownUser) {
+			t.Errorf("SetSMBPassword(%q) = %v, want ErrUnknownUser", name, err)
+		}
+	}
+}
+
+// The password goes on stdin. An argv is world-readable through /proc.
+func TestSetSMBPasswordSendsSecretOnStdinOnly(t *testing.T) {
+	r, res := inventoryFixture()
+	a := newTestAdmin(t, r, res)
+
+	const pw = "correct horse battery"
+	if err := a.SetSMBPassword(context.Background(), "alice", pw); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.calls {
+		if strings.Contains(c, pw) {
+			t.Fatalf("password appeared in a command line: %q", c)
+		}
+	}
+	found := false
+	for _, in := range r.stdin {
+		if in == pw+"\n"+pw+"\n" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("password was not written twice on stdin; got %q", r.stdin)
+	}
+}
+
+// A newline would make smbpasswd store only the prefix, so the account would
+// end up with a password nobody was told.
+func TestSetSMBPasswordRejectsNewlineAndEmpty(t *testing.T) {
+	r, res := inventoryFixture()
+	a := newTestAdmin(t, r, res)
+
+	for _, pw := range []string{"", "good\nevil"} {
+		if err := a.SetSMBPassword(context.Background(), "alice", pw); err == nil {
+			t.Errorf("SetSMBPassword(%q) was accepted", pw)
+		}
+	}
+}
+
+func TestAuditParsesFindingsFromANonZeroExit(t *testing.T) {
+	r, res := inventoryFixture()
+	r.out["usersync audit --json"] = `{"findings":[{"kind":"user","name":"skim","code":"missing","want":3001}]}`
+	r.err["usersync audit --json"] = errors.New("exit status 1")
+
+	rep, err := newTestAdmin(t, r, res).Audit(context.Background())
+	if err != nil {
+		t.Fatalf("a non-zero exit is how audit reports drift, not a failure: %v", err)
+	}
+	if rep.OK {
+		t.Error("OK = true with a finding present")
+	}
+	if len(rep.Findings) != 1 || rep.Findings[0].Name != "skim" {
+		t.Errorf("findings = %+v", rep.Findings)
+	}
+}
+
+func TestUsageParsesZFSUserspace(t *testing.T) {
+	r, res := inventoryFixture()
+	r.out["zfs userspace -Hpn -o name,used /srv/data"] = "3001\t1048576\n3002\t2097152\n"
+	a := newTestAdmin(t, r, res)
+
+	a.RefreshUsage(context.Background())
+
+	rep := a.Usage()
+	if rep.Source != "zfs" {
+		t.Errorf("source = %q, want zfs", rep.Source)
+	}
+	if rep.ByUID["3001"] != 1048576 || rep.ByUID["3002"] != 2097152 {
+		t.Errorf("by_uid = %v", rep.ByUID)
+	}
+}
+
+// Without ZFS the numbers come from a traversal, and they must still be
+// attributed by uid -- a name that no longer resolves still owns its bytes.
+func TestUsageFallsBackToATraversal(t *testing.T) {
+	r, res := inventoryFixture()
+	r.err["zfs userspace -Hpn -o name,used /srv/data"] = errors.New("exec: zfs: not found")
+	// the runner key is TrimSpace'd, so the trailing newline in -printf is gone
+	r.out["find /srv/data -xdev -type f -printf %U %b"] = "3001 2\n3001 4\n3002 8\n"
+	a := newTestAdmin(t, r, res)
+
+	a.RefreshUsage(context.Background())
+
+	rep := a.Usage()
+	if rep.Source != "du" {
+		t.Errorf("source = %q, want du", rep.Source)
+	}
+	if got := rep.ByUID["3001"]; got != 3072 { // (2+4) blocks * 512
+		t.Errorf("uid 3001 = %d, want 3072", got)
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}

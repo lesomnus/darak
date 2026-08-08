@@ -15,6 +15,9 @@ set -euo pipefail
 DATA_ROOT=${DARAK_ROOT:-/srv/data}
 CONFIG_DIR=${DARAK_CONFIG:-/etc/darak}
 STATE_DIR=${DARAK_STATE:-/var/lib/darak}
+ADMIN_GROUP=${DARAK_ADMIN_GROUP:-admin}
+ADMIN_GID=${DARAK_ADMIN_GID:-2000}
+ADMIN_MEMBERS=${DARAK_ADMIN_MEMBERS:-}
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
@@ -33,6 +36,7 @@ args=(
 	-root "$DATA_ROOT"
 	-helper /usr/local/bin/darak-helper
 	-shares "$STATE_DIR/shares.json"
+	-admin-group "$ADMIN_GROUP"
 )
 if [[ -n ${DARAK_TLS_CERT:-} ]]; then
 	[[ -n ${DARAK_TLS_KEY:-} ]] || die "DARAK_TLS_CERT is set but DARAK_TLS_KEY is not"
@@ -100,6 +104,43 @@ if [[ ! -f /etc/samba/smb.conf ]]; then
 		   # Everything below the marker is generated from the roster; edit the
 		   # roster, not this file.
 	EOF
+fi
+
+# --- operator group ---------------------------------------------------------
+#
+# Membership in this POSIX group is what opens the operator page. It is created
+# here rather than declared in roster.yaml because it is not a team: a roster
+# group gets a group folder and an SMB share, and an administrator being able to
+# manage accounts should not also create a shared directory nobody asked for.
+#
+# gid 2000 sits BELOW usersync's managed window (10000-19999) and above the
+# system floor, so usersync neither creates it nor complains about it, and
+# `usersync audit` stays quiet. Change DARAK_ADMIN_GID only before the first
+# start: it ends up on nothing, but a group whose number moves stops naming the
+# people who were in it.
+#
+# Membership is reapplied on every start from DARAK_ADMIN_MEMBERS, for the same
+# reason the accounts are: this container's /etc is derived state.
+if [[ -n $ADMIN_GROUP ]]; then
+	log "operator group ($ADMIN_GROUP, gid $ADMIN_GID)"
+	if ! getent group "$ADMIN_GROUP" >/dev/null; then
+		groupadd -g "$ADMIN_GID" "$ADMIN_GROUP" ||
+			die "could not create the $ADMIN_GROUP group at gid $ADMIN_GID"
+	fi
+	for u in ${ADMIN_MEMBERS//,/ }; do
+		if ! id "$u" >/dev/null 2>&1; then
+			echo "WARNING: $u is in DARAK_ADMIN_MEMBERS but is not an account; skipping" >&2
+			continue
+		fi
+		# usermod -aG is additive, and this runs after usersync has already set
+		# each user's supplementary groups from the roster -- so the admin group
+		# survives the reconcile instead of racing it.
+		usermod -aG "$ADMIN_GROUP" "$u"
+		log "  $u is an operator"
+	done
+	if [[ -z $ADMIN_MEMBERS ]]; then
+		echo "note: DARAK_ADMIN_MEMBERS is empty, so nobody can reach the operator page" >&2
+	fi
 fi
 
 # Shares come from the same roster the accounts do, so a new team appears on

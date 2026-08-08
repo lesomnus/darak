@@ -7,6 +7,7 @@ import { Breadcrumbs } from './components/Breadcrumbs'
 import { Browser } from './components/Browser'
 import { ShareDialog } from './components/ShareDialog'
 import { SharesDialog } from './components/SharesDialog'
+import { Admin } from './components/Admin'
 
 type Session = { state: 'unknown' } | { state: 'out' } | { state: 'in'; me: Me }
 
@@ -16,6 +17,10 @@ export function App() {
   const [error, setError] = useState('')
   const [sharePath, setSharePath] = useState<string | null>(null)
   const [showShares, setShowShares] = useState(false)
+  // Whether to OFFER the page. The gate is on the server, on every route, so
+  // this only decides whether a link is drawn -- a browser that lies to itself
+  // reaches nothing it could not reach anyway.
+  const [isAdmin, setIsAdmin] = useState(false)
 
   // A live session goes straight in, so a reload does not ask again.
   useEffect(() => {
@@ -28,6 +33,18 @@ export function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (session.state !== 'in') return
+    let cancelled = false
+    api
+      .adminWhoami()
+      .then((r) => !cancelled && setIsAdmin(r.admin))
+      .catch(() => !cancelled && setIsAdmin(false))
+    return () => {
+      cancelled = true
+    }
+  }, [session.state])
 
   const report = useCallback((message: string) => {
     setError(message)
@@ -42,6 +59,7 @@ export function App() {
       // Leaving either way; a failed logout still ends the session locally.
     }
     setSession({ state: 'out' })
+    setIsAdmin(false)
     navigate('')
   }
 
@@ -60,6 +78,15 @@ export function App() {
         </button>
         <Breadcrumbs path={path} user={user} onNavigate={navigate} />
         <span className="spacer" />
+        {isAdmin && (
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => navigate(path === ADMIN_PATH ? '' : ADMIN_PATH)}
+          >
+            {path === ADMIN_PATH ? '파일로' : '관리'}
+          </button>
+        )}
         <button type="button" className="ghost" onClick={() => setShowShares(true)}>
           공유 링크
         </button>
@@ -75,7 +102,16 @@ export function App() {
         </p>
       )}
 
-      {path === '' ? (
+      {path === ADMIN_PATH ? (
+        // Rendered only when the server said so. If it did not, the panels
+        // inside would each 404 -- which is the same answer a non-admin gets
+        // for the API, so nothing is disclosed by trying.
+        isAdmin ? (
+          <Admin me={user} onError={report} />
+        ) : (
+          <Start user={user} onNavigate={navigate} />
+        )
+      ) : path === '' ? (
         <Start user={user} onNavigate={navigate} />
       ) : (
         <Browser path={path} onNavigate={navigate} onError={report} onShare={setSharePath} />
@@ -113,3 +149,11 @@ function Start({ user, onNavigate }: { user: string; onNavigate: (path: string) 
     </main>
   )
 }
+
+/**
+ * The operator page's location.
+ *
+ * `admin` is not a valid first segment of the served tree (only `homes` and
+ * `teams` are), so this can never collide with a real path.
+ */
+const ADMIN_PATH = 'admin'

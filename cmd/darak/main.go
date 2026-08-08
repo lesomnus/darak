@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
 	"github.com/lesomnus/darak/internal/helperpool"
 	"github.com/lesomnus/darak/internal/run"
@@ -51,6 +52,8 @@ func realMain() error {
 		tlsCert       = flag.String("tls-cert", "", "PEM certificate chain; serves HTTPS when set together with -tls-key")
 		tlsKey        = flag.String("tls-key", "", "PEM private key")
 		allowRemapped = flag.Bool("allow-remapped-uids", false, "start even though uids here are not the numbers on disk (see the error this suppresses)")
+		adminGroup    = flag.String("admin-group", admin.DefaultGroup, "POSIX group whose members may use the operator page; empty disables it")
+		usageInterval = flag.Duration("usage-interval", 30*time.Minute, "how often per-user disk usage is remeasured")
 	)
 	flag.Parse()
 
@@ -104,9 +107,24 @@ func realMain() error {
 		web = ui.Handler()
 	}
 
+	// The operator surface is optional and off by nothing but an empty flag:
+	// with no admin group there is no page, and every route behind it answers
+	// exactly as it does for a signed-in user who is not an admin.
+	var adm *admin.Admin
+	if *adminGroup != "" {
+		adm, err = admin.New(admin.Config{
+			Group: *adminGroup,
+			Root:  *root,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	srv, err := server.New(server.Config{
 		FS:            &vfs.FS{Pool: pool},
 		Shares:        shares,
+		Admin:         adm,
 		UI:            web,
 		Auth:          auth.NTLM{Runner: run.Exec{}, Path: *ntlmAuthBin},
 		SessionTTL:    *sessionTTL,
@@ -121,6 +139,9 @@ func realMain() error {
 	defer stop()
 
 	go housekeeping(ctx, pool, srv, shares)
+	if adm != nil {
+		go measureUsage(ctx, adm, *usageInterval)
+	}
 
 	h := &http.Server{
 		Addr:    *addr,
@@ -189,6 +210,27 @@ func housekeeping(ctx context.Context, pool *helperpool.Pool, srv *server.Server
 			if err := shares.Sweep(); err != nil {
 				slog.Warn("could not persist the share store", "err", err)
 			}
+		}
+	}
+}
+
+// measureUsage keeps the per-user usage report fresh.
+//
+// It runs here rather than inside the handler because measuring is the one
+// operator query whose cost scales with the size of the data instead of the
+// number of accounts. A request serves whatever the last pass produced, tagged
+// with when that was, so the page stays responsive on a full and slow disk --
+// which is precisely when someone opens it.
+//
+// The first pass runs immediately so the page is not empty for the first
+// interval after a restart.
+func measureUsage(ctx context.Context, adm *admin.Admin, every time.Duration) {
+	for {
+		adm.RefreshUsage(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
 		}
 	}
 }

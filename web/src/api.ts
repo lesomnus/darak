@@ -1,4 +1,13 @@
-import { ApiError, type Listing, type Me, type ShareLink } from './types'
+import {
+  ApiError,
+  type AdminWhoami,
+  type DiskReport,
+  type DriftReport,
+  type Inventory,
+  type Listing,
+  type Me,
+  type ShareLink,
+} from './types'
 
 /**
  * Builds a URL for a path inside the served tree.
@@ -103,4 +112,30 @@ export const api = {
 
   revokeShare: (token: string) =>
     request<void>('/api/shares/' + encodeURIComponent(token), { method: 'DELETE' }),
+
+  // --- operator surface ---
+  //
+  // Everything but adminWhoami answers 404 to a non-admin, deliberately: the
+  // server does not confirm that an operator API exists at this path. So a
+  // failure here is not something to explain away in the interface -- it means
+  // the caller should not have asked.
+  adminWhoami: () => request<AdminWhoami>('/api/admin/whoami'),
+
+  adminUsers: (signal?: AbortSignal) => request<Inventory>('/api/admin/users', { signal }),
+
+  adminDisk: (signal?: AbortSignal) => request<DiskReport>('/api/admin/disk', { signal }),
+
+  adminAudit: (signal?: AbortSignal) => request<DriftReport>('/api/admin/audit', { signal }),
+
+  adminSetSmb: (user: string, enabled: boolean) =>
+    request<void>(`/api/admin/users/${encodeURIComponent(user)}/smb`, {
+      method: 'POST',
+      body: { enabled },
+    }),
+
+  adminSetPassword: (user: string, password: string) =>
+    request<void>(`/api/admin/users/${encodeURIComponent(user)}/password`, {
+      method: 'POST',
+      body: { password },
+    }),
 }

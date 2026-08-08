@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
 	"github.com/lesomnus/darak/internal/share"
 	"github.com/lesomnus/darak/internal/vfs"
@@ -31,6 +32,11 @@ type Config struct {
 	// Shares issues capability links. Nil disables the feature entirely rather
 	// than silently accepting requests it cannot honour.
 	Shares *share.Store
+
+	// Admin serves the operator surface. Nil makes every /api/admin route a 404
+	// -- the same answer a non-admin gets, so a deployment without it is
+	// indistinguishable from one where nobody qualifies.
+	Admin *admin.Admin
 
 	// UI, if set, is served at / for anything that is not an API route.
 	UI http.Handler
@@ -85,6 +91,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/shares", s.authed(s.handleShareCreate))
 	mux.HandleFunc("GET /api/shares", s.authed(s.handleShareList))
 	mux.HandleFunc("DELETE /api/shares/", s.authed(s.handleShareRevoke))
+
+	// Every signed-in user may ask whether they are an admin; only an admin may
+	// use anything behind it.
+	mux.HandleFunc("GET /api/admin/whoami", s.authed(s.handleAdminWhoami))
+	mux.HandleFunc("GET /api/admin/users", s.authed(s.adminOnly(s.handleAdminUsers)))
+	mux.HandleFunc("GET /api/admin/disk", s.authed(s.adminOnly(s.handleAdminDisk)))
+	mux.HandleFunc("GET /api/admin/audit", s.authed(s.adminOnly(s.handleAdminAudit)))
+	mux.HandleFunc("POST /api/admin/users/", s.authed(s.adminOnly(s.handleAdminUserOp)))
 
 	// The public side takes no session: the URL is the credential.
 	mux.HandleFunc("GET /s/", s.handleSharePublic)

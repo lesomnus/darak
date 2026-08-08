@@ -49,3 +49,79 @@ export class ApiError extends Error {
     this.status = status
   }
 }
+
+// --- operator surface (internal/admin) ---
+
+export interface AdminWhoami {
+  admin: boolean
+  /** The POSIX group that grants access, so the page can name it. */
+  group: string
+}
+
+export interface SMBAccount {
+  enabled: boolean
+}
+
+export interface AdminUser {
+  name: string
+  uid: number
+  gid: number
+  home: string
+  groups: string[]
+  full_name?: string
+  /**
+   * Absent means Samba could not be asked — which is NOT the same as having no
+   * account, so the page renders the two differently.
+   */
+  smb?: SMBAccount
+  usage_bytes?: number
+}
+
+export interface AdminGroup {
+  name: string
+  gid: number
+  members: string[]
+}
+
+export interface Inventory {
+  users: AdminUser[]
+  groups: AdminGroup[]
+  /** Why a field is missing, so an absence never reads as data. */
+  warnings?: string[]
+}
+
+export interface Capacity {
+  path: string
+  total_bytes: number
+  free_bytes: number
+  used_bytes: number
+  total_inodes: number
+  free_inodes: number
+}
+
+export interface UsageReport {
+  /** "zfs" counts everything a uid owns; "du" counts what is reachable now. */
+  source: string
+  measured_at: string
+  by_uid: Record<string, number>
+  error?: string
+}
+
+export interface DiskReport {
+  capacity: Capacity
+  usage: UsageReport
+}
+
+export interface Drift {
+  kind: string
+  name: string
+  code: string
+  want?: number
+  got?: number
+}
+
+export interface DriftReport {
+  findings: Drift[]
+  ok: boolean
+  error?: string
+}

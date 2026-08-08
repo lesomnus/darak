@@ -10,6 +10,8 @@
   --accent-fg: #ffffff;
   --hover: #f3f6fa;
   --error: #b3261e;
+  --ok: #146c2e;
+  --warn: #8a5300;
   --radius: 8px;
 }
 @media (prefers-color-scheme: dark) {
@@ -22,6 +24,8 @@
     --accent-fg: #10131a;
     --hover: #1f2226;
     --error: #f2b8b5;
+  --ok: #7ddb9b;
+  --warn: #e7b768;
   }
 }
 
@@ -363,4 +367,108 @@ dialog menu {
   min-height: 0;
   padding: 0.4rem 0.6rem;
   font-size: 0.85rem;
+}
+
+/* --- operator page --- */
+.admin {
+  padding: 1rem;
+  max-width: 60rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+.admin h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+.admin section > p {
+  margin: 0.35rem 0;
+}
+.ok {
+  color: var(--ok);
+}
+.warn-text {
+  color: var(--warn);
+}
+.warn {
+  color: var(--warn);
+  font-size: 0.85rem;
+  margin: 0.35rem 0;
+}
+
+/* A single bar rather than a donut: the only question is how close to full it
+   is, and a bar answers that at a glance from across a room. */
+.meter {
+  height: 0.6rem;
+  border-radius: var(--radius);
+  background: var(--hover);
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.meter .fill {
+  height: 100%;
+  background: var(--accent);
+}
+.meter .fill.warn-fill {
+  background: var(--warn);
+}
+.meter .fill.danger {
+  background: var(--error);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: baseline;
+}
+.admin-table th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.8rem;
+}
+.admin-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.admin-table .actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.admin-table .actions button {
+  margin-left: 0.25rem;
+}
+.admin-table button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.findings {
+  margin: 0.35rem 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+}
+.findings li {
+  margin: 0.2rem 0;
+}
+
+/* The table is the thing worth scrolling on a phone; the page is not. */
+@media (max-width: 40rem) {
+  .admin {
+    padding: 0.75rem;
+  }
+  .admin section {
+    overflow-x: auto;
+  }
+  .admin-table {
+    min-width: 34rem;
+  }
 }
