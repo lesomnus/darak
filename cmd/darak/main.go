@@ -48,6 +48,9 @@ func realMain() error {
 		maxUpload     = flag.Int64("max-upload", 64<<30, "largest accepted request body in bytes")
 		sharesFile    = flag.String("shares", "/var/lib/darak/shares.json", "where share links are kept; must NOT be on the data volume")
 		noUI          = flag.Bool("no-ui", false, "serve only the API")
+		tlsCert       = flag.String("tls-cert", "", "PEM certificate chain; serves HTTPS when set together with -tls-key")
+		tlsKey        = flag.String("tls-key", "", "PEM private key")
+		allowRemapped = flag.Bool("allow-remapped-uids", false, "start even though uids here are not the numbers on disk (see the error this suppresses)")
 	)
 	flag.Parse()
 
@@ -57,6 +60,17 @@ func realMain() error {
 	if os.Geteuid() != 0 {
 		return errors.New("must run as root: helpers are started as the requesting user")
 	}
+	// A shifted user namespace makes every uid mean a different number on disk,
+	// so files would be written owned by somebody the roster does not name — and
+	// nothing would fail at the time. It surfaces much later, as files their
+	// owner cannot open.
+	if err := helperpool.CheckIdentityMapping(); err != nil {
+		if !*allowRemapped {
+			return err
+		}
+		slog.Warn("starting with remapped uids because -allow-remapped-uids was given", "err", err)
+	}
+
 	// Resolve the helper up front for the same reason. This is an operator-
 	// supplied executable, not anything from a request — no path from a user is
 	// ever resolved in this process.
@@ -118,10 +132,30 @@ func realMain() error {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	// Half a TLS configuration is a deployment that silently serves plain HTTP
+	// while everyone believes otherwise.
+	if (*tlsCert == "") != (*tlsKey == "") {
+		return errors.New("-tls-cert and -tls-key must be given together")
+	}
+	serveTLS := *tlsCert != ""
+	if !serveTLS && *secureCookies {
+		// Secure cookies are never sent over plain HTTP, so the session would be
+		// issued and then never come back — a login that appears to work and does
+		// nothing. Say so rather than letting it be debugged from scratch.
+		slog.Warn("serving plain HTTP with -secure-cookies=true; put TLS in front of this, " +
+			"or logins will succeed and no session will ever be sent back")
+	}
+
 	errc := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", *addr, "root", *root)
-		if err := h.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Info("listening", "addr", *addr, "root", *root, "tls", serveTLS)
+		var err error
+		if serveTLS {
+			err = h.ListenAndServeTLS(*tlsCert, *tlsKey)
+		} else {
+			err = h.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()

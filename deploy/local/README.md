@@ -88,11 +88,14 @@ docker compose -f deploy/local/docker-compose.yaml exec darak \
 cd web && npm run dev     # :5173, /api 와 /s 를 :8080 으로 프록시
 ```
 
-## 주의
+## 이 설정을 실서버에 쓰지 마세요
 
-이건 **테스트용**입니다. 실서버에 쓰지 마세요.
+**메커니즘은 그대로 실서버에서 씁니다** — 계정을 컨테이너 안에서 roster로부터 재구성하는 방식은 [ADR-9](../../nas-design.md)로 채택됐고, [`deploy/prod/`](../prod/)가 같은 구조입니다. 다른 것은 설정뿐입니다:
 
-- 비밀번호가 평문으로 compose 파일에 있습니다
-- `-secure-cookies=false` — 평문 HTTP 전제입니다
-- 계정 관리가 usersync가 아니라 스크립트입니다(무덤돌도, 감사도 없습니다)
-- SMB가 인증 없는 로컬 네트워크에 445를 엽니다
+| | 여기 | `deploy/prod/` |
+|---|---|---|
+| 계정 관리 | 대역 스크립트 | **usersync**(무덤돌, 범위 가드, 감사) |
+| TLS | 없음, `-secure-cookies=false` | 필수 — 없으면 기동 거부 |
+| 비밀번호 | compose에 평문 | 시드 파생, 볼륨에 보관 |
+| 데이터 | docker 볼륨 | 실제 데이터셋(bind) |
+| SMB | 1445로 매핑 | 호스트 네트워킹, 445 |

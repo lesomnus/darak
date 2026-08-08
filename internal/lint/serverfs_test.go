@@ -79,15 +79,15 @@ var helperOnly = map[string]bool{
 	"cmd/darak-helper":     true,
 }
 
-// localStateMarker exempts a file that touches server-local state — a state file
-// the operator configured — rather than the tree being served.
+// localStateMarker exempts a file that resolves a FIXED path outside the served
+// tree — server state the operator configured, or the process asking about
+// itself.
 //
 // The rule this check enforces is that the server never resolves a path that
-// came from a REQUEST. A fixed configuration path is not that, and there is no
-// way to route it through a helper anyway: no user owns it. The exemption is a
-// marker in the file rather than a directory in a list so that every instance is
-// visible where it happens and greppable, instead of a package quietly growing
-// new ones.
+// came from a REQUEST. Neither of those is that, and neither can be routed
+// through a helper anyway: no user owns them. The exemption is a marker in the
+// file rather than a directory in a list so that every instance is visible where
+// it happens and greppable, instead of a package quietly growing new ones.
 const localStateMarker = "//darak:local-state"
 
 // maxExempt bounds how many files may carry the marker. An exemption mechanism

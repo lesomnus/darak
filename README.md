@@ -149,6 +149,11 @@ data knows about its owners is the number. That is the same property the AD
 migration rests on, exercised on every start — see
 [deploy/local/README.md](./deploy/local/README.md).
 
+Production is the same shape: [`deploy/prod`](./deploy/prod/README.md) runs the
+server, Samba and usersync in one container, with the accounts rebuilt from
+`roster.yaml` on every start. What differs is TLS, real passwords, and usersync
+rather than a stand-in script.
+
 ## Tests
 
 ```sh

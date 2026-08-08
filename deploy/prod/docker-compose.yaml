@@ -1,0 +1,93 @@
+# The file server, as one container.
+#
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up -d --build
+#
+# Samba runs INSIDE this container rather than on the host, which is what lets
+# the accounts live only here (nas-design.md ADR-9): both access paths resolve
+# users through the same /etc/passwd, so there is one account database and it is
+# rebuilt from roster.yaml on every start.
+#
+# The two things that must NOT be rebuilt are mounted: the data, and the SMB
+# credential store. Accounts are derived from the roster; passwords are not
+# derivable from anything.
+
+services:
+  darak:
+    build:
+      context: ../..
+      dockerfile: deploy/prod/Dockerfile
+      args:
+        # Empty means the Dockerfile's pinned commit. See .env.example and
+        # deploy/prod/README.md for why it is a commit and not a tag yet.
+        USERSYNC_VERSION: ${USERSYNC_VERSION:-004a6bd6ac5a945fe3d670cc93abd7ca19a40bf8}
+    image: darak:${DARAK_VERSION:-local}
+
+    # Root inside the container: starting a helper AS the requesting user is the
+    # design, and changing credentials needs the privilege to do it.
+    user: root
+
+    # Host networking, for SMB rather than for speed. Windows and macOS clients
+    # want port 445 itself, and NAT between a client and smbd is a source of
+    # problems nobody wants to debug at 2am. It also means nothing is published
+    # here — 8080 and 445 are the host's own ports, so the host firewall is what
+    # decides who reaches them.
+    network_mode: host
+
+    # userns-remap would make uid 3001 in here a different number on disk, and
+    # every file this writes would be owned by somebody the roster does not name
+    # — silently. darak refuses to start in that case; this says out loud that
+    # the deployment depends on it.
+    userns_mode: host
+
+    volumes:
+      # The data. A real dataset, not a docker volume: it is the thing that gets
+      # snapshotted, backed up, and later moved to CephFS.
+      - ${DARAK_DATA:?set DARAK_DATA to the dataset to serve}:/srv/data
+
+      # tdbsam. The one piece of state that cannot be rebuilt from the roster:
+      # accounts are derived, the passwords in them are not.
+      - samba:/var/lib/samba
+
+      # Share links — capability tokens. Deliberately not on the data volume;
+      # nas-design.md §7 keeps that volume free of application state because it
+      # is the one that later becomes a shared filesystem.
+      - state:/var/lib/darak
+
+      # The roster and its operational config, read-only. This is the input the
+      # accounts are made from, and the container has no business editing it —
+      # it is version-controlled elsewhere and that is where changes belong.
+      - ${DARAK_CONFIG:-./config}:/etc/darak:ro
+
+      # The seed usersync derives initial passwords from. Read-only, and kept
+      # apart from the roster so it is not committed by accident.
+      - ${DARAK_SEED:-./secrets/seed.secret}:/etc/darak/seed.secret:ro
+
+      # TLS material, if this terminates it rather than a proxy.
+      - ${DARAK_TLS_DIR:-./tls}:/etc/darak/tls:ro
+
+    environment:
+      DARAK_TLS_CERT: ${DARAK_TLS_CERT:-/etc/darak/tls/fullchain.pem}
+      DARAK_TLS_KEY: ${DARAK_TLS_KEY:-/etc/darak/tls/privkey.pem}
+      # Set to 1 instead of the two above when something in front terminates TLS.
+      DARAK_BEHIND_PROXY: ${DARAK_BEHIND_PROXY:-}
+      DARAK_HEALTH_URL: ${DARAK_HEALTH_URL:-https://localhost:8080/}
+      SMB_WORKGROUP: ${SMB_WORKGROUP:-WORKGROUP}
+      SMB_SERVER_STRING: ${SMB_SERVER_STRING:-darak}
+      TZ: ${TZ:-Asia/Seoul}
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+    # An upload can take a long time; a stop should not cut one off if it is
+    # nearly done.
+    stop_grace_period: 60s
+
+volumes:
+  samba:
+  state:
