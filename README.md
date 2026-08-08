@@ -40,7 +40,8 @@ ordinary at the call site. `internal/lint` fails the build if one appears.
 | `internal/auth` | passwords, via `ntlm_auth` against Samba's passdb |
 | `internal/server` | HTTP |
 | `internal/share` | capability links |
-| `internal/ui` | the browser interface, embedded |
+| `web` | the browser interface (TypeScript, React, Vite) |
+| `internal/ui` | its build output, embedded |
 | `internal/lint` | the invariant above |
 | `internal/integration` | real users, real modes, real Samba — in a container |
 
@@ -71,9 +72,27 @@ DELETE /api/shares/<token>     revoke
 GET    /s/<token>              the public side; no session — the URL is the credential
 ```
 
-Anything not matching a route is the browser interface, which is plain HTML, CSS
-and JavaScript embedded in the binary. There is no build step and nothing to
-install on the server.
+Anything not matching a route is the browser interface.
+
+## The interface
+
+It lives in `web/` — TypeScript and React, built by Vite into
+`internal/ui/dist`, which is **committed** and embedded into the binary.
+
+That split is the point: Node is a dependency of *changing* the interface, never
+of running or deploying it. `go build` on a clean clone still produces one static
+binary with nothing to install beside it, which is what the deployment target —
+one machine an administrator maintains by hand — actually needs.
+
+```sh
+scripts/build-ui.sh            # rebuild after changing web/; commit the output
+scripts/build-ui.sh --check    # CI: fail if the committed output is stale
+cd web && npm run dev          # live reload, proxying /api and /s to :8080
+```
+
+A Go test fails if the embedded build is missing or empty. Whether it is
+*current* can only be checked by rebuilding, which is what `--check` is for —
+nothing inside a Go test can know what the sources would have produced.
 
 Paths are relative to the served root and are laid out as
 `homes/<user>/…` and `teams/<team>/…`. That is not cosmetic: it is what decides

@@ -1,0 +1,366 @@
+/* One stylesheet, no framework. The people this is for are on a company laptop
+   or a phone; what it needs to be is legible and obvious, not novel. */
+
+:root {
+  --bg: #ffffff;
+  --fg: #1b1d1f;
+  --muted: #6b7177;
+  --line: #e2e5e8;
+  --accent: #2a63d0;
+  --accent-fg: #ffffff;
+  --hover: #f3f6fa;
+  --error: #b3261e;
+  --radius: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181a;
+    --fg: #e6e8ea;
+    --muted: #9aa1a8;
+    --line: #2b2f33;
+    --accent: #5a8dee;
+    --accent-fg: #10131a;
+    --hover: #1f2226;
+    --error: #f2b8b5;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    16px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'Noto Sans KR',
+    system-ui,
+    sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+  border-radius: var(--radius);
+}
+button,
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0.55rem 0.9rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  cursor: pointer;
+  /* Comfortably tappable on a phone. */
+  min-height: 2.75rem;
+  border-radius: var(--radius);
+}
+button.ghost,
+.ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--line);
+}
+button.icon {
+  background: transparent;
+  border: 0;
+  font-size: 1.25rem;
+  padding: 0.3rem 0.5rem;
+  min-height: 0;
+}
+button:hover:not(:disabled),
+.button:hover {
+  filter: brightness(1.06);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 0.85rem;
+}
+.error {
+  color: var(--error);
+}
+.error.bar {
+  margin: 0.5rem 0.75rem 0;
+}
+.spacer {
+  flex: 1;
+}
+
+/* --- login --- */
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 1rem;
+}
+.login form {
+  width: min(22rem, 100%);
+  display: grid;
+  gap: 0.5rem;
+}
+.login h1 {
+  font-size: 1.35rem;
+  margin: 0;
+}
+.login p {
+  margin: 0 0 0.5rem;
+}
+.login label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.login input {
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.login button {
+  margin-top: 0.5rem;
+}
+
+/* --- chrome --- */
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+.who {
+  white-space: nowrap;
+}
+@media (max-width: 34rem) {
+  .who {
+    display: none;
+  }
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.crumbs .crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.crumbs button {
+  background: none;
+  color: var(--fg);
+  border: 0;
+  padding: 0.3rem 0.35rem;
+  min-height: 0;
+  border-radius: 4px;
+}
+.crumbs button:hover {
+  background: var(--hover);
+}
+.crumbs .sep {
+  color: var(--muted);
+}
+.crumbs .current {
+  font-weight: 600;
+}
+
+.toolbar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.browser {
+  min-height: 60vh;
+}
+.drop-hint {
+  margin: 0 0.75rem;
+  padding: 1.5rem;
+  text-align: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent);
+}
+
+.progress {
+  margin: 0 0.75rem 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.progress .bar {
+  height: 6px;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.15s;
+  flex: 1;
+}
+
+/* --- rows --- */
+main {
+  padding: 0 0.25rem 4rem;
+}
+.start {
+  padding-top: 0.5rem;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.5rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  min-height: 0;
+}
+.row:hover {
+  background: var(--hover);
+}
+.row .icon {
+  font-size: 1.35rem;
+  width: 1.6rem;
+  text-align: center;
+  flex: none;
+}
+.row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex: none;
+}
+.row .actions {
+  display: flex;
+  gap: 0.25rem;
+  flex: none;
+}
+.row .actions button {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  padding: 0.35rem;
+  min-height: 0;
+  font-size: 1rem;
+  border-radius: 4px;
+}
+.row .actions button:hover {
+  background: var(--line);
+  color: var(--fg);
+}
+@media (max-width: 30rem) {
+  .row .meta {
+    display: none;
+  }
+}
+
+.empty {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* --- dialogs --- */
+dialog {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 1.1rem;
+  width: min(30rem, calc(100vw - 2rem));
+}
+dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+dialog h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+dialog label {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+dialog input,
+dialog select {
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+dialog menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+
+.share-item {
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+}
+.share-item:first-of-type {
+  border-top: 0;
+}
+.share-url {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.3rem;
+}
+.share-url input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 0.85rem;
+}
+.share-url button {
+  min-height: 0;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+}
