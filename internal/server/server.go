@@ -47,6 +47,10 @@ type Config struct {
 	// UI, if set, is served at / for anything that is not an API route.
 	UI http.Handler
 
+	// Brand is what the interface puts in its corner. The zero value is the
+	// built-in mark and DefaultBrandName; see LoadBrand.
+	Brand Brand
+
 	// SessionTTL bounds how long a login lasts. Sessions are held in memory, so
 	// they are also dropped by a restart.
 	SessionTTL time.Duration
@@ -76,6 +80,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.MaxUpload <= 0 {
 		cfg.MaxUpload = defaultMaxUpload
 	}
+	if cfg.Brand.Name == "" {
+		cfg.Brand.Name = DefaultBrandName
+	}
 	return &Server{cfg: cfg, sessions: NewSessions(cfg.SessionTTL)}, nil
 }
 
@@ -89,10 +96,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/whoami", s.authed(s.handleWhoami))
 
+	// Not behind authed(): the login page carries the mark too, and it is drawn
+	// before anyone has signed in.
+	mux.HandleFunc("GET /api/branding", s.handleBranding)
+	mux.HandleFunc("GET /api/branding/logo", s.handleBrandingLogo)
+
 	mux.HandleFunc("GET /api/files/", s.authed(s.handleGet))
 	mux.HandleFunc("PUT /api/files/", s.authed(s.handlePut))
 	mux.HandleFunc("DELETE /api/files/", s.authed(s.handleDelete))
 	mux.HandleFunc("POST /api/dirs/", s.authed(s.handleMkdir))
+	mux.HandleFunc("GET /api/search/", s.authed(s.handleSearch))
 
 	mux.HandleFunc("POST /api/shares", s.authed(s.handleShareCreate))
 	mux.HandleFunc("GET /api/shares", s.authed(s.handleShareList))

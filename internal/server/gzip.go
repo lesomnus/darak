@@ -103,7 +103,10 @@ func qZero(params string) bool {
 // type is far more likely to be already-compressed bytes (an archive, a video,
 // an office document) than something worth another pass.
 var compressible = map[string]bool{
-	"application/json":       true,
+	"application/json": true,
+	// The search stream. Highly repetitive -- the same keys on every line -- and
+	// the middleware's Flush is forwarded, so batches still leave promptly.
+	"application/x-ndjson":   true,
 	"application/javascript": true,
 	"text/javascript":        true,
 	"text/html":              true,

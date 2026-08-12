@@ -1,0 +1,111 @@
+# Development stack: the same server as deploy/local, with the interface served
+# by Vite off the working tree instead of from the binary.
+#
+#   docker compose -f deploy/dev/docker-compose.yaml up --build
+#   open http://localhost:5173
+#
+# Two containers, and the split is the point.
+#
+#   darak  is BUILT. It embeds internal/ui/dist and is then told -no-ui, so the
+#          only thing it serves is the API. Changing Go code means rebuilding
+#          this one service; changing the interface does not touch it at all.
+#   web    is NOT built. Stock node, with web/ bind-mounted, running Vite. It
+#          proxies /api and /s to darak, which keeps the browser on one origin
+#          and is what makes the session cookie work.
+#
+# Reaching the interface on :5173 rather than :8080 is not a detail: :8080 has
+# no interface in this stack. See README.md.
+name: darak-dev
+
+services:
+  darak:
+    build:
+      # The repository root, and the local image: the account setup, Samba and
+      # the boot order being exercised here should be the ones deploy/local
+      # exercises, or this stack tests something nobody ships.
+      context: ../..
+      dockerfile: deploy/local/Dockerfile
+    # Root inside the container: starting a helper AS the requesting user is the
+    # whole design, and that needs the privilege to change credentials.
+    user: root
+    ports:
+      # Loopback by default. `- "8080:8080"` binds 0.0.0.0, which on an office
+      # or a cafe network puts this on it -- and this stack is plain HTTP with
+      # -secure-cookies=false and its passwords printed in the log. None of that
+      # is wrong for a dev stack; being reachable from the next desk is.
+      #
+      # DARAK_BIND=0.0.0.0 opens it up, for the real case that wants it: trying
+      # the interface on a phone.
+      #
+      # 8080 is published even though the browser goes through Vite, because
+      # curl-ing the API directly is half of what this stack is for.
+      - "${DARAK_BIND:-127.0.0.1}:8080:8080"
+      - "${DARAK_BIND:-127.0.0.1}:1445:445"
+    volumes:
+      - data:/srv/data
+      - samba:/var/lib/samba
+      - state:/var/lib/darak
+      # The same roster and the same logo as the local stack. One set of test
+      # accounts, not two that drift.
+      - ../local/config:/etc/darak
+    command:
+      # No embedded interface. The one in the binary is whatever was last
+      # committed to internal/ui/dist, and serving it beside the live one is how
+      # an afternoon goes into wondering why an edit did nothing.
+      - -no-ui
+      - -brand-name
+      - 다락 연구소 (dev)
+      - -brand-logo
+      - /etc/darak/logo.svg
+    environment:
+      DARAK_ADMIN_MEMBERS: alice
+    healthcheck:
+      # NOT `/`, which the local stack uses: with -no-ui there is nothing there.
+      # An unauthenticated API route answers 401, which is a perfectly good sign
+      # of life -- so this deliberately drops curl's -f, which would read that
+      # 401 as a failure.
+      test: ["CMD", "curl", "-sS", "-o", "/dev/null", "--max-time", "3", "http://localhost:8080/api/whoami"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  web:
+    # Stock image, no Dockerfile. Nothing is built here -- the whole point is
+    # that what runs is the working tree.
+    #
+    # Debian rather than Alpine: esbuild and rollup ship separate glibc and musl
+    # binaries, and an Alpine container next to a glibc lockfile resolves to the
+    # wrong one in a way whose error message names a package that is installed.
+    image: node:22-bookworm-slim
+    working_dir: /app
+    ports:
+      - "${DARAK_BIND:-127.0.0.1}:5173:5173"
+    volumes:
+      - ../../web:/app
+      # Shadows the host's node_modules with the container's own. See web.sh.
+      - node_modules:/app/node_modules
+      - ./web.sh:/usr/local/bin/web.sh:ro
+    environment:
+      # Read by vite.config.ts. By service name, on the compose network.
+      DARAK_ORIGIN: http://darak:8080
+      # Set VITE_POLL=1 on Docker Desktop (macOS, Windows), where a bind mount
+      # does not deliver inotify events and nothing would ever reload.
+      VITE_POLL: ${VITE_POLL:-}
+    entrypoint: ["/bin/sh", "/usr/local/bin/web.sh"]
+    depends_on:
+      darak:
+        # Waiting costs half a minute on the first boot and saves the confusing
+        # version of this stack: an interface that renders, offers a login form,
+        # and refuses every password because the API is still setting up Samba.
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  data:
+  samba:
+  state:
+  # Kept across restarts so `npm ci` runs when the lockfile changes and not
+  # every time the stack comes up.
+  node_modules:

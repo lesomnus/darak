@@ -79,7 +79,15 @@ export function useWindowVirtual({
   const [seenKey, setSeenKey] = useState(resetKey)
   if (seenKey !== resetKey) {
     setSeenKey(resetKey)
-    setRange({ start: 0, end: FIRST_PAINT })
+    // FIRST_PAINT only applies before anything has been measured. Once a row
+    // height is known -- which it is by the second keystroke in a search box --
+    // one screenful is exactly computable, and laying out sixty rows to show
+    // fifteen of them is the most expensive part of a keystroke: each one
+    // mounts a dropdown menu.
+    setRange({
+      start: 0,
+      end: rowHeight > 0 ? Math.ceil(window.innerHeight / rowHeight) + overscan : FIRST_PAINT,
+    })
   }
 
   const windowing = count > threshold

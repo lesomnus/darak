@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, filesUrl } from '../api'
 import type { Entry } from '../types'
-import { domainRoot, sortEntries, TRASH_DIR } from '../lib/format'
+import { compareNames, domainRoot, sortEntries, TRASH_DIR } from '../lib/format'
+import { foldOf, needleOf, scoreFolded, type Match } from '../lib/fuzzy'
 import { useWindowVirtual } from '../lib/useVirtual'
-import { FileRow } from './FileRow'
+import { useDeepSearch } from '../lib/useDeepSearch'
+import { DeepResults } from './DeepResults'
+import { FileRow, type Row } from './FileRow'
 import { Icon } from './Icon'
 
 interface UploadState {
@@ -14,11 +17,18 @@ interface UploadState {
 
 export function Browser({
   path,
+  query,
+  isFavourite,
+  onToggleFavourite,
   onNavigate,
   onError,
   onShare,
 }: {
   path: string
+  /** What was typed in the header's search box. Filters this listing only. */
+  query: string
+  isFavourite: (path: string) => boolean
+  onToggleFavourite: (path: string) => void
   onNavigate: (path: string) => void
   onError: (message: string) => void
   onShare: (path: string) => void
@@ -31,7 +41,58 @@ export function Browser({
   // Sorted once per listing rather than once per render: at 50,000 entries a
   // Korean-collation sort is not something to redo because a drag started.
   const sorted = useMemo(() => (entries === null ? null : sortEntries(entries)), [entries])
-  const virtual = useWindowVirtual({ count: sorted?.length ?? 0, resetKey: path })
+
+  // Everything the matcher needs, computed ONCE per listing rather than once
+  // per keystroke: normalising and folding 50,000 names is the expensive half,
+  // and it does not depend on what has been typed.
+  const index = useMemo<Row[] | null>(() => {
+    if (sorted === null) return null
+    return sorted.map((entry) => ({ entry, ...foldOf(entry.name), match: null }))
+  }, [sorted])
+
+  // Prepared once per keystroke rather than once per entry.
+  const needle = useMemo(() => needleOf(query), [query])
+  const filtering = needle.text !== ''
+  const visible = useMemo<Row[] | null>(() => {
+    if (index === null || !filtering) return index
+    const out: Row[] = []
+    for (const row of index) {
+      const match = scoreFolded(row, needle)
+      if (match) out.push({ ...row, match })
+    }
+    // Best first. Sorting a filtered list by name would bury the thing that
+    // matched best under everything that merely matched, which is the whole
+    // difference between a filter and a search.
+    out.sort(
+      (a, b) =>
+        (b.match as Match).score - (a.match as Match).score ||
+        (a.entry.dir === b.entry.dir
+          ? compareNames(a.entry.name, b.entry.name)
+          : a.entry.dir
+            ? -1
+            : 1),
+    )
+    return out
+  }, [index, needle])
+
+  // A filtered list is a DIFFERENT list, so the window goes back to its top --
+  // otherwise typing while scrolled deep leaves you past the end of the result
+  // and looking at nothing.
+  const virtual = useWindowVirtual({
+    count: visible?.length ?? 0,
+    // Separated by an escape that cannot occur in a path, so no pair of
+    // (directory, query) can collide with another and skip the reset.
+    resetKey: `${path}\u0000${needle.text}`,
+  })
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [needle.text])
+
+  // And the other half of searching: a walk of the tree below here, on the
+  // server. Two characters is the floor -- below that the server only accepts a
+  // contiguous hit anyway, and walking twenty thousand entries for one letter
+  // is work nobody asked for.
+  const deep = useDeepSearch(path, needle.text, needle.text.length >= 2)
 
   // Windowing unmounts rows as they leave the viewport, and one of them may be
   // the row the keyboard is on. When that happens the browser drops focus to
@@ -49,6 +110,7 @@ export function Browser({
   })
 
   const inTrash = path.endsWith('/' + TRASH_DIR)
+  const starred = isFavourite(path)
   // A file can only be written inside a permission domain; the two top levels
   // are navigation, not places to put things.
   const canWrite = domainRoot(path) !== null
@@ -168,6 +230,19 @@ export function Browser({
           <Icon name="trash" size={17} />
           휴지통
         </button>
+        {/* On the toolbar rather than only in a row's menu, because the folder
+            you want to keep is usually the one you are standing in -- you got
+            here, and now you want to get back. */}
+        <button
+          type="button"
+          className="ghost"
+          aria-pressed={starred}
+          title={starred ? '즐겨찾기에서 빼기' : '첫 화면에 즐겨찾기로 두기'}
+          onClick={() => onToggleFavourite(path)}
+        >
+          <Icon name={starred ? 'star-on' : 'star'} size={17} />
+          즐겨찾기
+        </button>
       </div>
 
       {dragging && <div className="drop-hint">여기에 놓으면 올라갑니다</div>}
@@ -200,28 +275,45 @@ export function Browser({
           {!loadError && entries !== null && entries.length === 0 && (
             <p className="empty">{inTrash ? '휴지통이 비어 있습니다.' : '비어 있습니다.'}</p>
           )}
+          {/* A folder that HAS files and is showing none is a different state
+              from an empty one, and saying "비어 있습니다" here would be a lie
+              that hides the filter causing it. */}
+          {!loadError && filtering && sorted !== null && sorted.length > 0 && visible?.length === 0 && (
+            <p className="empty">
+              “{query.trim()}”에 맞는 이름이 없습니다.
+              <br />
+              <span className="small">이 폴더 안에서만 찾습니다.</span>
+            </p>
+          )}
           {/* A directory that loaded WITH files used to say nothing at all: the
               live region wrapped the rows before, and taking it off them (the
               windowed list rewrites itself on every scroll, which a screen
               reader would read out) removed the only announcement there was.
               The count is the useful sentence anyway -- the rows themselves are
               navigable once you know they arrived. */}
-          {!loadError && sorted !== null && sorted.length > 0 && (
-            <p className="sr-only">{sorted.length.toLocaleString('ko-KR')}개 항목</p>
+          {!loadError && sorted !== null && visible !== null && visible.length > 0 && (
+            <p className="sr-only">
+              {filtering
+                ? `${sorted.length.toLocaleString('ko-KR')}개 중 ${visible.length.toLocaleString('ko-KR')}개 일치`
+                : `${visible.length.toLocaleString('ko-KR')}개 항목`}
+            </p>
           )}
         </div>
 
         {/* Above the list, not below it. Below, it sits after the spacer that
             stands in for every row not rendered -- which on the listings this
             notice exists for is several hundred thousand pixels down. */}
-        {virtual.active && sorted && (
+        {(virtual.active || filtering) && sorted && visible && visible.length > 0 && (
           <p className="muted small count">
-            {sorted.length.toLocaleString('ko-KR')}개 — 화면에 보이는 만큼만 그립니다. 브라우저의
-            페이지 내 찾기(Ctrl+F)는 보이는 범위에서만 동작합니다.
+            {filtering
+              ? `${sorted.length.toLocaleString('ko-KR')}개 중 ${visible.length.toLocaleString('ko-KR')}개`
+              : `${visible.length.toLocaleString('ko-KR')}개`}
+            {virtual.active &&
+              ' — 화면에 보이는 만큼만 그립니다. 브라우저의 페이지 내 찾기(Ctrl+F)는 보이는 범위에서만 동작합니다.'}
           </p>
         )}
 
-        {sorted !== null && (
+        {visible !== null && (
           <div
             ref={virtual.ref}
             // Focusable so there is somewhere to put focus when the row that
@@ -236,13 +328,15 @@ export function Browser({
                 scrollbar describes the whole directory rather than the part
                 currently in the document. */}
             {virtual.padTop > 0 && <div style={{ height: virtual.padTop }} aria-hidden="true" />}
-            {sorted.slice(virtual.start, virtual.end).map((entry) => {
+            {visible.slice(virtual.start, virtual.end).map((row) => {
+              const entry = row.entry
               const child = path + '/' + entry.name
               return (
                 <FileRow
                   key={entry.name}
-                  entry={entry}
+                  row={row}
                   inTrash={inTrash}
+                  favourite={isFavourite(child)}
                   onOpen={() => {
                     if (entry.dir) onNavigate(child)
                     // A download, not a fetch: the browser streams it, and Range
@@ -251,6 +345,7 @@ export function Browser({
                   }}
                   onShare={() => onShare(child)}
                   onDelete={() => void remove(entry)}
+                  onToggleFavourite={() => onToggleFavourite(child)}
                 />
               )
             })}
@@ -258,6 +353,14 @@ export function Browser({
               <div style={{ height: virtual.padBottom }} aria-hidden="true" />
             )}
           </div>
+        )}
+
+        {/* Below the folder's own rows, and outside the windowed container:
+            these come from a walk of the tree, they each live somewhere else,
+            and the virtualiser measures a row inside that container to work out
+            how tall the rest of THIS listing would be. */}
+        {needle.text.length >= 2 && (
+          <DeepResults search={deep} path={path} query={query.trim()} onNavigate={onNavigate} />
         )}
       </main>
     </div>

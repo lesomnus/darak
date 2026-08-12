@@ -18,6 +18,34 @@ export interface Listing {
   entries: Entry[]
 }
 
+/** One line of the search stream (server.searchHit). */
+export interface SearchHit {
+  /** Relative to the directory that was searched. */
+  path: string
+  /** The entry's own name, in NFC — what `pos` indexes and what is drawn. */
+  name: string
+  dir: boolean
+  score: number
+  /** Matched characters, as UTF-16 code unit offsets into `name`. */
+  pos: number[]
+}
+
+/**
+ * The stream's last line.
+ *
+ * `truncated` is the whole reason it exists: a list cut short by a budget looks
+ * exactly like a complete list of everything there is, and those are opposite
+ * answers.
+ */
+export interface SearchDone {
+  done: true
+  visited: number
+  matches: number
+  truncated: boolean
+  /** Set when the walk failed after the response had already started. */
+  error?: string
+}
+
 /** An issued capability link (server.shareView). */
 export interface ShareLink {
   token: string
@@ -31,6 +59,18 @@ export interface ShareLink {
 
 export interface Me {
   user: string
+}
+
+/**
+ * What this installation calls itself (server.Brand).
+ *
+ * `logo` says whether GET /api/branding/logo has anything to serve. Asking
+ * first, rather than pointing an <img> at it and letting it fail, is what keeps
+ * a broken-image glyph out of the corner of every page on a default install.
+ */
+export interface Branding {
+  name: string
+  logo: boolean
 }
 
 /**

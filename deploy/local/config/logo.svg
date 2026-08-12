@@ -1,0 +1,18 @@
+<!-- A stand-in mark, so the local stack demonstrates -brand-logo rather than
+     only documenting it. Replace the file, or point the flag elsewhere.
+
+     Two colours and no text. Text in an SVG depends on fonts the viewer
+     happens to have, and the name is drawn as real HTML beside this anyway
+     (-brand-name), where it can wrap, ellipsize and follow the theme. A mark
+     loaded through <img> cannot do any of that: it is rendered outside the
+     page's styles, so it does not see `currentColor` and does not see
+     data-theme. Which is why this one is a mid-tone blue that holds up on both
+     the light and the dark background. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect x="2" y="2" width="28" height="28" rx="7" fill="#3160d8"/>
+  <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 14.5 16 8l8 6.5"/>
+    <path d="M10 13.5V24h12V13.5"/>
+    <path d="M14 24v-4.5h4V24"/>
+  </g>
+</svg>

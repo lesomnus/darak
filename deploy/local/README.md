@@ -1,5 +1,7 @@
 # 로컬 테스트 스택
 
+배포된 것처럼 구는 스택입니다 — 인터페이스는 바이너리에 박힌 **커밋된 빌드**입니다. 화면을 고치는 중이라면 [`deploy/dev`](../dev/README.md) 쪽이 맞습니다(Vite, 핫 리로드). 포트가 겹치니 둘 중 하나만 띄우세요.
+
 ```sh
 docker compose -f deploy/local/docker-compose.yaml up --build
 ```
@@ -8,6 +10,8 @@ docker compose -f deploy/local/docker-compose.yaml up --build
 - SMB `//localhost:1445/alice`, `//localhost:1445/team-a`
 
 계정은 [`config/roster.yaml`](./config/roster.yaml)에서 나옵니다. 초기 비밀번호는 전부 `darak`이고, 바꾸면 그 비밀번호가 유지됩니다.
+
+이 스택은 브랜딩도 켜 두었습니다 — `compose.yaml`의 `command:`가 `-brand-name 다락 연구소`와 `-brand-logo /etc/darak/logo.svg`를 넘깁니다. [`config/logo.svg`](./config/logo.svg)를 바꾸고 재시작하면 바뀝니다(**시작할 때 한 번만 읽습니다**). 지우고 플래그를 빼면 기본 글리프로 돌아갑니다. 운영 쪽 설정은 [prod README](../prod/README.md#이름과-로고)에 있습니다.
 
 ---
 

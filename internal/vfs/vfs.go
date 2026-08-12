@@ -409,13 +409,7 @@ func (f *FS) Remove(ctx context.Context, user, p string) error {
 	if err != nil {
 		return err
 	}
-	resp, _, err := f.do(ctx, user, &wire.Request{
-		Op: wire.OpRename, Path: p, Path2: path.Join(trash, f.trashName(p)),
-	})
-	if err != nil {
-		return err
-	}
-	if err := errnoOf("remove", p, resp.Errno); err != nil {
+	if err := f.moveToTrash(ctx, user, p, trash); err != nil {
 		return err
 	}
 	// Recorded as a delete, not a rename. It IS a move to the trash, but what
@@ -423,6 +417,51 @@ func (f *FS) Remove(ctx context.Context, user, p string) error {
 	// asking where their file went.
 	f.note(user, "delete", p, "")
 	return nil
+}
+
+// moveToTrash renames p into the trash under a name that is not already taken.
+//
+// RENAME_NOREPLACE is the whole point. A plain rename REPLACES the destination,
+// atomically and without complaint, and the trash name has one-second
+// resolution -- so deleting two things with the same base name inside the same
+// second destroyed the first copy, returned 204, and told nobody. In a design
+// whose answer to last-write-wins is "the previous version is in the trash",
+// the trash quietly eating a version is the one failure that is not allowed.
+//
+// The overwrite path (linkToTrash) has always retried on a collision. This is
+// the same loop; it was missing here because rename does not report one.
+func (f *FS) moveToTrash(ctx context.Context, user, p, trash string) error {
+	name := f.trashName(p)
+	for attempt := 0; ; attempt++ {
+		resp, _, err := f.do(ctx, user, &wire.Request{
+			Op: wire.OpRename, Path: p, Path2: path.Join(trash, name),
+			Flags: unix.RENAME_NOREPLACE,
+		})
+		if err != nil {
+			return err
+		}
+		switch unix.Errno(resp.Errno) {
+		case 0:
+			return nil
+		case unix.EEXIST:
+			if attempt >= 8 {
+				return errnoOf("remove", p, resp.Errno)
+			}
+			suffix, err := randomSuffix()
+			if err != nil {
+				return err
+			}
+			name = f.trashName(p) + "-" + suffix
+		case unix.EINVAL:
+			// The filesystem does not know the flag. Refusing the delete is the
+			// only honest answer left: falling back to a plain rename would be
+			// exactly the silent overwrite this exists to prevent, and it would
+			// only ever happen on the deployments least likely to notice.
+			return errnoOf("remove", p, resp.Errno)
+		default:
+			return errnoOf("remove", p, resp.Errno)
+		}
+	}
 }
 
 func (f *FS) unlink(ctx context.Context, user, p string) error {

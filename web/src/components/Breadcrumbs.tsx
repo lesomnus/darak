@@ -1,19 +1,8 @@
-import { TRASH_DIR } from '../lib/format'
+// Labels come from lib/format so the saved-places lists on the start page name
+// a folder exactly the way the crumbs do. `homes/<you>` reads as "내 폴더" with
+// the username dropped: it is your own home, so repeating it adds nothing.
+import { segmentLabel as label } from '../lib/format'
 import { Icon } from './Icon'
-
-/**
- * Labels the path in the words people use.
- *
- * `homes/<you>` reads as "내 폴더" with the name dropped: it is your own home,
- * so repeating your username adds nothing.
- */
-function label(part: string, index: number, parts: string[], user: string): string | null {
-  if (index === 0 && part === 'homes') return '내 폴더'
-  if (index === 0 && part === 'teams') return '팀 폴더'
-  if (index === 1 && parts[0] === 'homes' && part === user) return null
-  if (part === TRASH_DIR) return '휴지통'
-  return part
-}
 
 /**
  * Where a crumb goes, which is not always the path it stands for.

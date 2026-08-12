@@ -44,6 +44,11 @@ export type IconName =
   | 'logout'
   | 'disk'
   | 'clock'
+  | 'search'
+  | 'settings'
+  | 'menu'
+  | 'star'
+  | 'star-on'
 
 interface Props extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   name: IconName
@@ -228,6 +233,35 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 7.2V12l3 1.9" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="10.8" cy="10.8" r="6.3" />
+      <path d="m15.5 15.5 4.4 4.4" />
+    </>
+  ),
+  // Not `more` (⋯), which already means "this one row's actions" in the
+  // listing. Two different things opening from two different places must not
+  // wear the same mark.
+  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  // The two states of one control, so they are the same outline and only the
+  // fill changes -- a star that also changed shape when you pressed it would
+  // read as a different button.
+  star: <path d="m12 3.6 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />,
+  'star-on': (
+    <path
+      fill="currentColor"
+      d="m12 3.6 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"
+    />
+  ),
+  // A cog, and it has to be a cog: the first attempt was a circle with eight
+  // spokes, which is the `sun` above with a bigger middle -- so "설정" and
+  // "밝게" were the same picture, two inches apart, in the same card.
+  settings: (
+    <>
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
     </>
   ),
 }

@@ -2,11 +2,14 @@ import {
   ApiError,
   type ActivityReport,
   type AdminWhoami,
+  type Branding,
   type DiskReport,
   type DriftReport,
   type Inventory,
   type Listing,
   type Me,
+  type SearchDone,
+  type SearchHit,
   type TeamsView,
   type TeamWhoami,
   type ShareLink,
@@ -90,6 +93,9 @@ async function request<T>(url: string, opts: RequestOptions = {}): Promise<T> {
 export const api = {
   whoami: () => request<Me>('/api/whoami'),
 
+  // No session required: the login page carries the mark as well.
+  branding: () => request<Branding>('/api/branding'),
+
   login: (user: string, password: string) =>
     request<Me>('/api/login', { method: 'POST', body: { user, password } }),
 
@@ -104,6 +110,60 @@ export const api = {
   remove: (path: string) => request<void>(filesUrl(path), { method: 'DELETE' }),
 
   mkdir: (path: string) => request<void>(dirsUrl(path), { method: 'POST' }),
+
+  /**
+   * Walks below `path` and yields the names that match, as they are found.
+   *
+   * Not request(): this response is NDJSON and arrives over seconds, because
+   * the walk is the slow part and streaming is what hides it. Abort the signal
+   * to stop the walk -- the server drops it when the connection goes, so a
+   * superseded search stops costing anything almost immediately.
+   */
+  search: async function* (
+    path: string,
+    query: string,
+    signal: AbortSignal,
+  ): AsyncGenerator<SearchHit | SearchDone> {
+    const url =
+      '/api/search/' +
+      path.split('/').map(encodeURIComponent).join('/') +
+      '?q=' +
+      encodeURIComponent(query)
+    const res = await fetch(url, { signal })
+    if (!res.ok || !res.body) {
+      let detail = `요청이 실패했습니다 (${res.status})`
+      try {
+        const body = (await res.json()) as { error?: string }
+        if (body.error) detail = body.error
+      } catch {
+        // Not JSON; the status is all there is.
+      }
+      throw new ApiError(res.status, explain(res.status, detail))
+    }
+
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buffer = ''
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += value
+        // A chunk boundary lands wherever the network put it, which is regularly
+        // in the middle of a line. Everything up to the last newline is whole;
+        // the remainder waits for more bytes.
+        let nl: number
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl)
+          buffer = buffer.slice(nl + 1)
+          if (line) yield JSON.parse(line) as SearchHit | SearchDone
+        }
+      }
+    } finally {
+      // On an abort or an early return, stop the body so the server sees the
+      // connection go and abandons its walk.
+      void reader.cancel().catch(() => {})
+    }
+  },
 
   shares: () => request<{ links: ShareLink[] }>('/api/shares'),
 

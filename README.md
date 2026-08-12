@@ -62,6 +62,11 @@ POST   /api/login              {"user":..., "password":...}
 POST   /api/logout
 GET    /api/whoami
 
+GET    /api/branding           no session — the login page carries the mark too
+GET    /api/branding/logo      the -brand-logo image, or 404
+
+GET    /api/search/<path>?q=   walks below <path>, streams matching names as NDJSON
+
 GET    /api/files/<path>       directory -> JSON listing; file -> content (Range, ETag)
 PUT    /api/files/<path>       upload
 DELETE /api/files/<path>       move to the trash — NOT a delete
@@ -105,12 +110,60 @@ one machine an administrator maintains by hand — actually needs.
 ```sh
 scripts/build-ui.sh            # rebuild after changing web/; commit the output
 scripts/build-ui.sh --check    # CI: fail if the committed output is stale
-cd web && npm run dev          # live reload, proxying /api and /s to :8080
+cd web && npm run dev          # live reload, proxying /api/ and /s/ to :8080
 ```
+
+Or with nothing installed but Docker — a built server plus Vite over a bind
+mount of `web/`, hot reload included:
+
+```sh
+docker compose -f deploy/dev/docker-compose.yaml up --build   # then :5173
+```
+
+[`deploy/dev/README.md`](deploy/dev/README.md) says what it is and how it
+differs from [`deploy/local`](deploy/local/README.md), which serves the
+committed build the way a deployment does.
 
 A Go test fails if the embedded build is missing or empty. Whether it is
 *current* can only be checked by rebuilding, which is what `--check` is for —
 nothing inside a Go test can know what the sources would have produced.
+
+The mark in the corner — and on the login page, and in the tab title — is the
+operator's, set with `-brand-name` and `-brand-logo`. The image is read once at
+startup and held in memory; a bad path stops the process rather than putting a
+broken image on every page. See [`deploy/prod/README.md`](deploy/prod/README.md).
+
+The search box does two things at once, and they are not the same thing.
+
+**The directory you are looking at** is filtered in the browser, on every
+keystroke, with no round trip — the listing is already in memory. Fuzzy and
+ranked, with the matched characters marked so a result can be argued with.
+`ㅎㅇㄹ` finds `회의록`: Korean lead-consonant search is how people here
+actually look for a file. Measured at 10–52ms per keystroke over 50,000 entries.
+
+**Everything below it** is `GET /api/search/`, three hundred milliseconds after
+you stop typing. The server walks the tree as you — the existing READDIR, one
+directory at a time, so the helper protocol did not have to grow an operation on
+its security boundary — matches as it goes, and streams the hits as NDJSON.
+Bounded at depth 8, 20,000 entries examined, 1,000 results and two seconds, and
+the last line of the stream says whether a bound stopped it. Typing again aborts
+the request, which drops the walk.
+
+Matching happens on the server there so it can send thirty names instead of
+twenty thousand. The price is that this matcher exists twice, in
+`web/src/lib/fuzzy.ts` and `internal/fuzzy` — and what stops the two drifting is
+`internal/fuzzy/testdata/vectors.json`, a corpus both test suites read. Change
+how anything scores on one side and the other side's tests fail.
+
+```sh
+cd web && npm test               # node --test, no test runner to install
+cd web && npm run gen:fuzzy-vectors   # only when the scoring is meant to change
+```
+
+The start page remembers **starred folders and the last ten you were in**, in
+localStorage, keyed by username so a shared machine does not show one person's
+team folders to the next (`lib/usePlaces.ts`). Nothing is stored server-side;
+there is no route that would hold it.
 
 Paths are relative to the served root and are laid out as
 `homes/<user>/…` and `teams/<team>/…`. That is not cosmetic: it is what decides

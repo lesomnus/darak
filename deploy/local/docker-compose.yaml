@@ -38,6 +38,15 @@ services:
       # here -- `users[].groups`, on behalf of a team owner, through
       # `usersync member`. Everything else the roster decides stays a hand edit.
       - ./config:/etc/darak
+    # Appended to the darak command line by the entrypoint. The mark in the
+    # corner belongs to whoever runs this, so the local stack sets one -- both
+    # to show the flags and so that a change to the top bar is tested against a
+    # real image rather than only against the built-in glyph.
+    command:
+      - -brand-name
+      - 다락 연구소
+      - -brand-logo
+      - /etc/darak/logo.svg
     environment:
       # Who may reach the operator page. Comma-separated names, which must be
       # accounts the roster declares. Same variable as production.

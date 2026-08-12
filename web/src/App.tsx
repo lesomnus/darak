@@ -3,10 +3,12 @@ import { api } from './api'
 import type { Me } from './types'
 import { usePath } from './lib/usePath'
 import { useTheme } from './lib/useTheme'
-import { Icon } from './components/Icon'
-import { ThemeSwitch } from './components/ThemeSwitch'
+import { useBranding } from './lib/useBranding'
+import { usePlaces, type Places } from './lib/usePlaces'
+import { describePath } from './lib/format'
+import { Icon, type IconName } from './components/Icon'
 import { Login } from './components/Login'
-import { Breadcrumbs } from './components/Breadcrumbs'
+import { TopBar } from './components/TopBar'
 import { Browser } from './components/Browser'
 import { ShareDialog } from './components/ShareDialog'
 import { SharesDialog } from './components/SharesDialog'
@@ -18,7 +20,15 @@ export function App() {
   const [session, setSession] = useState<Session>({ state: 'unknown' })
   const [path, navigate] = usePath()
   const [theme, setTheme] = useTheme()
+  const brand = useBranding()
   const [error, setError] = useState('')
+  // Lives here rather than in Browser because the box that fills it is in the
+  // header, which Browser is not inside of.
+  const [query, setQuery] = useState('')
+  // Controlled, so the start page's hint can OPEN the menu rather than only
+  // point at it. On an empty first screen, being told where a control is and
+  // being taken to it are different amounts of help.
+  const [menuOpen, setMenuOpen] = useState(false)
   const [sharePath, setSharePath] = useState<string | null>(null)
   const [showShares, setShowShares] = useState(false)
   // Whether to OFFER the page. The gate is on the server, on every route, so
@@ -58,6 +68,19 @@ export function App() {
     }
   }, [session.state])
 
+  // A filter belongs to the directory it was typed in. Carrying it to the next
+  // one shows an empty folder that is not empty, with the reason sitting in a
+  // box at the top of the screen that nobody re-reads after they have used it
+  // once. Keyed on `path` rather than done inside navigate() so that the back
+  // button clears it too.
+  useEffect(() => {
+    setQuery('')
+  }, [path])
+
+  // Above the session gate below, because hooks cannot be called conditionally.
+  // The empty user before sign-in reads and records nothing.
+  const places = usePlaces(session.state === 'in' ? session.me.user : '', path)
+
   const report = useCallback((message: string) => {
     setError(message)
     // Long enough to read, short enough not to become furniture.
@@ -78,52 +101,33 @@ export function App() {
 
   if (session.state === 'unknown') return null
   if (session.state === 'out') {
-    return <Login onSignedIn={(me) => setSession({ state: 'in', me })} />
+    // usePlaces is called unconditionally above, so this early return does not
+    // skip a hook.
+    return <Login brand={brand} onSignedIn={(me) => setSession({ state: 'in', me })} />
   }
 
   const user = session.me.user
 
   return (
     <>
-      <header>
-        <button
-          type="button"
-          className="icon"
-          title="처음으로"
-          aria-label="처음으로"
-          onClick={() => navigate('')}
-        >
-          <Icon name="folder" size={22} />
-        </button>
-        <Breadcrumbs path={path} user={user} onNavigate={navigate} />
-        <span className="spacer" />
-        {(isAdmin || myTeams.length > 0) && (
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => navigate(path === ADMIN_PATH ? '' : ADMIN_PATH)}
-          >
-            <Icon name={path === ADMIN_PATH ? 'folder' : isAdmin ? 'shield' : 'team'} size={17} />
-            <span className="label">{path === ADMIN_PATH ? '파일로' : isAdmin ? '관리' : '팀'}</span>
-          </button>
-        )}
-        <button type="button" className="ghost" onClick={() => setShowShares(true)}>
-          <Icon name="link" size={17} />
-          <span className="label">공유 링크</span>
-        </button>
-        <ThemeSwitch theme={theme} onChange={setTheme} />
-        <span className="muted small who">{user}</span>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => void signOut()}
-          title="로그아웃"
-          aria-label="로그아웃"
-        >
-          <Icon name="logout" size={17} />
-          <span className="label">로그아웃</span>
-        </button>
-      </header>
+      <TopBar
+        brand={brand}
+        path={path}
+        user={user}
+        query={query}
+        onQuery={setQuery}
+        // Only a listing can be filtered. The start page holds two buttons and
+        // the operator page has its own filters.
+        searchable={path !== '' && path !== ADMIN_PATH}
+        theme={theme}
+        onTheme={setTheme}
+        canAdmin={isAdmin || myTeams.length > 0}
+        menuOpen={menuOpen}
+        onMenuOpen={setMenuOpen}
+        onNavigate={navigate}
+        onShares={() => setShowShares(true)}
+        onSignOut={() => void signOut()}
+      />
 
       {error && (
         <p className="error bar" role="alert">
@@ -138,12 +142,30 @@ export function App() {
         isAdmin || myTeams.length > 0 ? (
           <Admin me={user} isAdmin={isAdmin} onError={report} />
         ) : (
-          <Start user={user} onNavigate={navigate} />
+          <Start
+            user={user}
+            places={places}
+            onNavigate={navigate}
+            onOpenMenu={() => setMenuOpen(true)}
+          />
         )
       ) : path === '' ? (
-        <Start user={user} onNavigate={navigate} />
+        <Start
+          user={user}
+          places={places}
+          onNavigate={navigate}
+          onOpenMenu={() => setMenuOpen(true)}
+        />
       ) : (
-        <Browser path={path} onNavigate={navigate} onError={report} onShare={setSharePath} />
+        <Browser
+          path={path}
+          query={query}
+          isFavourite={places.isFavourite}
+          onToggleFavourite={places.toggleFavourite}
+          onNavigate={navigate}
+          onError={report}
+          onShare={setSharePath}
+        />
       )}
 
       {sharePath !== null && (
@@ -155,12 +177,28 @@ export function App() {
 }
 
 /**
- * The two places anything lives.
+ * The first screen: where things live, and where you have been.
  *
  * Landing on a bare listing of the served root would show `homes` and `teams`,
  * which are directory names rather than an answer to "where are my files".
+ *
+ * The two lists under them come from localStorage, so on a machine that has
+ * never been used they are empty -- and an empty first screen is exactly when a
+ * person has no idea what this thing contains. That case gets the hint, and the
+ * hint OPENS the menu rather than describing where it is.
  */
-function Start({ user, onNavigate }: { user: string; onNavigate: (path: string) => void }) {
+function Start({
+  user,
+  places,
+  onNavigate,
+  onOpenMenu,
+}: {
+  user: string
+  places: Places
+  onNavigate: (path: string) => void
+  onOpenMenu: () => void
+}) {
+  const { favourites, recents } = places
   return (
     <main className="start">
       <button type="button" className="row" onClick={() => onNavigate(`homes/${user}`)}>
@@ -177,7 +215,103 @@ function Start({ user, onNavigate }: { user: string; onNavigate: (path: string) 
         <span className="name">팀 폴더</span>
         <Icon name="chevron" size={16} className="go" />
       </button>
+
+      {favourites.length > 0 && (
+        <section className="places">
+          <h2>즐겨찾기</h2>
+          {favourites.map((p) => (
+            <PlaceRow
+              key={p}
+              path={p}
+              user={user}
+              icon="star-on"
+              onGo={() => onNavigate(p)}
+              // A starred folder that was deleted or that you lost access to
+              // cannot be un-starred from inside it -- you cannot get inside it.
+              // So the only way out is here.
+              onForget={() => places.forgetFavourite(p)}
+              forgetLabel="즐겨찾기에서 빼기"
+            />
+          ))}
+        </section>
+      )}
+
+      {recents.length > 0 && (
+        <section className="places">
+          <h2>
+            최근
+            <button type="button" className="tiny ghost" onClick={places.clearRecents}>
+              지우기
+            </button>
+          </h2>
+          {recents.map((p) => (
+            <PlaceRow key={p} path={p} user={user} icon="clock" onGo={() => onNavigate(p)} />
+          ))}
+        </section>
+      )}
+
+      {favourites.length === 0 && recents.length === 0 && (
+        <p className="start-hint">
+          여기에는 즐겨찾기한 폴더와 마지막으로 열어본 폴더가 쌓입니다. 아직 아무것도 없네요.
+          <br />
+          갈 수 있는 폴더 목록은 오른쪽 위 <Icon name="menu" size={15} className="inline-ico" />{' '}
+          메뉴에 있습니다.
+          <button type="button" className="ghost" onClick={onOpenMenu}>
+            <Icon name="menu" size={17} />
+            폴더 목록 열기
+          </button>
+        </p>
+      )}
     </main>
+  )
+}
+
+/**
+ * One saved place.
+ *
+ * Two lines: the folder's own name, and the way to it. The last segment alone
+ * is ambiguous -- three teams can each have a `문서` -- and the whole path on
+ * one line is unreadable at the width of a row.
+ */
+function PlaceRow({
+  path,
+  user,
+  icon,
+  onGo,
+  onForget,
+  forgetLabel,
+}: {
+  path: string
+  user: string
+  icon: IconName
+  onGo: () => void
+  onForget?: () => void
+  forgetLabel?: string
+}) {
+  const { name, trail } = describePath(path, user)
+  return (
+    <div className="place">
+      <button type="button" className="row" onClick={onGo}>
+        <span className="icon" data-kind={icon === 'star-on' ? 'folder' : undefined}>
+          <Icon name={icon} size={18} />
+        </span>
+        <span className="name">
+          {name}
+          {trail && <span className="trail">{trail}</span>}
+        </span>
+      </button>
+      {onForget && (
+        <button
+          type="button"
+          className="icon place-forget"
+          aria-label={`${name} ${forgetLabel}`}
+          title={forgetLabel}
+          onClick={onForget}
+        >
+          <Icon name="close" size={15} />
+        </button>
+      )}
+    </div>
   )
 }
 

@@ -503,3 +503,58 @@ func TestTrashCreationIsNotRecorded(t *testing.T) {
 		t.Errorf("recorded = %v, missing %v", recorded, want)
 	}
 }
+
+// The trash name has one-second resolution, and a plain rename replaces its
+// destination without complaining. Together those meant that deleting two
+// things with the same base name inside the same second destroyed the first
+// copy, returned success, and told nobody.
+//
+// The whole design accepts last-write-wins on the grounds that the previous
+// version is in the trash. That argument does not survive the trash losing a
+// version, so this is the one case that has to be a test rather than a comment.
+func TestTrashDoesNotOverwriteAnEarlierDeletion(t *testing.T) {
+	fs, _ := newFS(t)
+	ctx := context.Background()
+	const dir = "homes/alice"
+
+	for _, content := range []string{"first", "second"} {
+		if err := fs.Write(ctx, "alice", dir+"/collide.txt", strings.NewReader(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Remove(ctx, "alice", dir+"/collide.txt"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ents, err := fs.ReadDir(ctx, "alice", dir+"/"+TrashDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, e := range ents {
+		if strings.Contains(e.Name, "collide.txt") {
+			found = append(found, e.Name)
+		}
+	}
+	if len(found) != 2 {
+		t.Fatalf("trash holds %v; both deleted versions must survive", found)
+	}
+
+	// And both are actually readable, with the contents they had.
+	seen := map[string]bool{}
+	for _, name := range found {
+		f, err := fs.Open(ctx, "alice", dir+"/"+TrashDir+"/"+name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(f)
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[string(b)] = true
+	}
+	if !seen["first"] || !seen["second"] {
+		t.Errorf("trash contents = %v, want both versions", seen)
+	}
+}

@@ -50,6 +50,20 @@ elif [[ ${DARAK_BEHIND_PROXY:-} != "1" ]]; then
 	die "no TLS: set DARAK_TLS_CERT and DARAK_TLS_KEY, or DARAK_BEHIND_PROXY=1 if a reverse proxy terminates it"
 fi
 
+# The mark in the corner and in the tab title. Both optional; without them the
+# interface uses its own glyph and calls itself "파일 서버".
+if [[ -n ${DARAK_BRAND_NAME:-} ]]; then
+	args+=(-brand-name "$DARAK_BRAND_NAME")
+fi
+if [[ -n ${DARAK_BRAND_LOGO:-} ]]; then
+	# Checked here for the same reason TLS is, one paragraph up: a path that is
+	# not there should stop the start, not produce a page with a broken image in
+	# the corner of it that nobody reports for a week.
+	[[ -r ${DARAK_BRAND_LOGO} ]] ||
+		die "cannot read $DARAK_BRAND_LOGO — put the file inside DARAK_CONFIG, which is mounted at /etc/darak"
+	args+=(-brand-logo "$DARAK_BRAND_LOGO")
+fi
+
 # Order matters here, and it is not the obvious one.
 #
 # The layout roots come FIRST because usersync creates a home with MkdirAll,

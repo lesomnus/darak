@@ -93,12 +93,21 @@ const localStateMarker = "//darak:local-state"
 // maxExempt bounds how many files may carry the marker. An exemption mechanism
 // with no ceiling becomes the rule it was an exception to.
 //
-// Raising it is meant to be an argument, not a formality. The four today:
+// Raising it is meant to be an argument, not a formality. The five today:
 //
 //	internal/share/file.go       the share-link store, at an operator-given path
 //	internal/helperpool/idmap.go /proc/self/uid_map, the process asking about itself
 //	internal/admin/disk.go       statfs on the -root flag, for the capacity report
 //	internal/activity/store.go   the activity log it owns, and smbd's log, read-only
+//	internal/server/branding.go  the -brand-logo image, read once before serving
+//
+// The fifth is the weakest of the five and still clears the bar: it resolves a
+// path INSIDE package server, which is where the rule bites hardest. What saves
+// it is when and from where. The path is a flag, it is read in LoadBrand before
+// the listener exists, and the bytes are held in memory from then on — no
+// request reaches a filesystem call, because by the time requests exist there is
+// no filesystem call left to reach. Serving the image per request instead would
+// not qualify, and is the reason it is not done that way.
 //
 // Two of them touch the served tree, and both touch it as a WHOLE rather than
 // at a place: disk.go returns block counts for the filesystem, and store.go
@@ -111,7 +120,7 @@ const localStateMarker = "//darak:local-state"
 // Anything that reads a user's file, or resolves a name a request supplied,
 // does not qualify however convenient the marker would be. That is the case the
 // helper exists for.
-const maxExempt = 4
+const maxExempt = 5
 
 func repoRoot(t *testing.T) string {
 	t.Helper()

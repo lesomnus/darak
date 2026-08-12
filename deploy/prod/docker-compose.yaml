@@ -86,6 +86,11 @@ services:
       # Set to 1 instead of the two above when something in front terminates TLS.
       DARAK_BEHIND_PROXY: ${DARAK_BEHIND_PROXY:-}
       DARAK_HEALTH_URL: ${DARAK_HEALTH_URL:-https://localhost:8080/}
+      # What the interface calls this installation, and the image beside it.
+      # The logo has to be a path the container can see — put it in DARAK_CONFIG
+      # (mounted at /etc/darak) and name it from there.
+      DARAK_BRAND_NAME: ${DARAK_BRAND_NAME:-}
+      DARAK_BRAND_LOGO: ${DARAK_BRAND_LOGO:-}
       SMB_WORKGROUP: ${SMB_WORKGROUP:-WORKGROUP}
       SMB_SERVER_STRING: ${SMB_SERVER_STRING:-darak}
       TZ: ${TZ:-Asia/Seoul}

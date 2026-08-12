@@ -1,10 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { api } from '../api'
-import type { Me } from '../types'
+import type { Branding, Me } from '../types'
 
-export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
+export function Login({
+  brand,
+  onSignedIn,
+}: {
+  brand: Branding
+  onSignedIn: (me: Me) => void
+}) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [broken, setBroken] = useState(false)
 
   async function submit(ev: FormEvent<HTMLFormElement>) {
     ev.preventDefault()
@@ -25,7 +32,19 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
   return (
     <section className="login">
       <form onSubmit={submit}>
-        <h1>파일 서버</h1>
+        {/* The mark belongs here more than anywhere else: this is the page that
+            has to answer "what am I signing in to" before anyone has agreed to
+            type a password into it. Which is why /api/branding takes no
+            session. */}
+        {brand.logo && !broken && (
+          <img
+            className="login-logo"
+            src="/api/branding/logo"
+            alt=""
+            onError={() => setBroken(true)}
+          />
+        )}
+        <h1>{brand.name}</h1>
         <p className="muted">회사 계정으로 로그인하세요.</p>
 
         <label>

@@ -5,7 +5,11 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    // "node" is here for the test files and scripts/, which run under Node with
+    // its type stripping rather than through Vite. The cost is that browser code
+    // could reference a Node global and still typecheck; the benefit is that the
+    // tests keeping the Go and TypeScript matchers in step are themselves checked.
+    "types": ["vite/client", "node"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -14,6 +18,9 @@
     "noUnusedParameters": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    // The test files import "./fuzzy.ts" by its real name, because Node runs
+    // them directly and there is no bundler to resolve an extensionless path.
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
 
     "noEmit": true

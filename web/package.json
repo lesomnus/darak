@@ -6,14 +6,18 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "gen:fuzzy-vectors": "node scripts/gen-fuzzy-vectors.ts",
     "preview": "vite preview"
   },
   "dependencies": {
     "@radix-ui/react-dropdown-menu": "^2.1.24",
+    "@radix-ui/react-popover": "^1.1.23",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",

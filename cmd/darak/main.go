@@ -58,6 +58,8 @@ func realMain() error {
 		activityDir   = flag.String("activity", "/var/lib/darak/activity", "where the who-changed-what record is kept; empty disables it")
 		activityKeep  = flag.Duration("activity-keep", activity.DefaultKeep, "how long to keep activity records (permanent retention is a backup's job)")
 		smbLog        = flag.String("smb-log", "/var/log/samba/audit.log", "smbd's log, read for full_audit records; empty disables the SMB half")
+		brandName     = flag.String("brand-name", server.DefaultBrandName, "what the interface calls this installation, in the corner and in the page title")
+		brandLogo     = flag.String("brand-logo", "", "image file to draw in the corner instead of the built-in mark (svg, png, jpg, webp, gif, avif, ico; read once at startup)")
 	)
 	flag.Parse()
 
@@ -109,6 +111,14 @@ func realMain() error {
 	var web http.Handler
 	if !*noUI {
 		web = ui.Handler()
+	}
+
+	// Read now rather than per request: this process resolves no path of its own
+	// once it is serving, and an operator who mistyped -brand-logo should find
+	// out here instead of from a broken image.
+	brand, err := server.LoadBrand(*brandName, *brandLogo)
+	if err != nil {
+		return err
 	}
 
 	// The operator surface is optional and off by nothing but an empty flag:
@@ -163,6 +173,7 @@ func realMain() error {
 		Shares:        shares,
 		Admin:         adm,
 		UI:            web,
+		Brand:         brand,
 		Auth:          auth.NTLM{Runner: run.Exec{}, Path: *ntlmAuthBin},
 		SessionTTL:    *sessionTTL,
 		SecureCookies: *secureCookies,

@@ -221,9 +221,6 @@ textarea:focus-visible {
   border: 1px solid color-mix(in oklab, var(--error) 30%, transparent);
   border-radius: var(--r-md);
 }
-.spacer {
-  flex: 1;
-}
 /* Announced, not shown. `display: none` would take it out of the accessibility
    tree too, which is the opposite of the point. */
 .sr-only {
@@ -260,6 +257,17 @@ textarea:focus-visible {
   letter-spacing: -0.02em;
   margin: 0;
 }
+/* Bigger than the one in the bar, and bounded the same way: this is an
+   operator's own file and the form around it has to survive whatever it is. */
+.login-logo {
+  display: block;
+  height: 2.75rem;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left center;
+  margin-bottom: 0.6rem;
+}
 .login p {
   margin: 0 0 0.75rem;
   color: var(--muted);
@@ -276,12 +284,13 @@ textarea:focus-visible {
 }
 
 /* --- chrome --- */
+/* Two rows: the bar, and the path under it.
+   The path used to share one line with five controls, which on a phone left it
+   about two characters wide -- and the path is the thing that says where you
+   are. It loses that argument to nothing else up here, so it gets its own line
+   at every width and the bar keeps exactly three things. */
 header {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  padding-top: max(0.5rem, env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -290,37 +299,143 @@ header {
   background: var(--bg);
   z-index: 20;
 }
-.who {
+
+/* A grid rather than a flex row, so the search box is centred in the WINDOW
+   instead of in whatever space the mark left over. The mark is an operator's
+   own image and can be any width; a search box that slides sideways with the
+   length of a company's name looks like a mistake. */
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 34rem) 1fr;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+}
+.topbar > :first-child {
+  justify-self: start;
+}
+.topbar > :last-child {
+  justify-self: end;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  color: var(--fg);
+  padding: 0.3rem 0.45rem;
+  min-height: 0;
+  border-radius: var(--r-sm);
+}
+.brand:hover:not(:disabled) {
+  background: var(--hover);
+}
+.brand-mark {
+  color: var(--ico-folder);
+}
+/* Bounded in both directions, because what is in here is a file the operator
+   chose and nothing else in the page can absorb a surprise. A wordmark twice
+   the height of the bar would redraw the whole layout around itself. */
+.brand-logo {
+  display: block;
+  flex: none;
+  height: 1.6rem;
+  width: auto;
+  max-width: 9rem;
+  object-fit: contain;
+}
+.brand-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
   white-space: nowrap;
-  color: var(--fg-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-/* The header has five controls plus the path. Below this the labels go and the
-   icons stay -- which is why every one of those buttons carries an icon and an
-   aria-label, and not just text. */
-@media (max-width: 52rem) {
-  header .ghost .label {
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+/* The ring is on the wrapper, not the input: the input has no border of its
+   own, so its focus ring would be drawn inside the pill and read as a second
+   box. */
+.search:focus-within {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.search .search-mark {
+  color: var(--muted);
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0.42rem 0;
+  border-radius: 0;
+}
+.search input:focus-visible {
+  outline: none;
+  border: 0;
+  box-shadow: none;
+}
+/* WebKit draws its own, in a shape that cannot be styled and does not match
+   anything else here. This box supplies one. */
+.search input::-webkit-search-cancel-button {
+  display: none;
+}
+.search-clear {
+  padding: 0.22rem;
+}
+/* Nowhere to search: the start page holds two buttons and the operator page has
+   filters of its own. Dimmed rather than removed, so the bar keeps its shape
+   across a navigation. */
+.search.off {
+  opacity: 0.5;
+}
+
+.pathbar {
+  padding: 0 0.8rem 0.45rem;
+}
+.pathbar .crumbs {
+  font-size: var(--t-sm);
+}
+
+/* The centred column gives up width before the mark does; below the second
+   breakpoint there is no middle left to centre, so the bar stops pretending
+   and the search box simply fills what is between the two icons. */
+@media (max-width: 62rem) {
+  .topbar {
+    grid-template-columns: 1fr minmax(0, 26rem) 1fr;
+  }
+}
+@media (max-width: 46rem) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.4rem;
+    padding: 0.45rem 0.5rem;
+  }
+  .brand-name {
     display: none;
   }
-  header .ghost {
-    padding: 0.5rem;
-  }
-}
-@media (max-width: 40rem) {
-  .who {
-    display: none;
-  }
-}
-/* On a phone the path gets its own line. Sharing one with five controls left it
-   about two characters wide, and the path is the thing that says where you
-   are -- it loses that argument to nothing else in the header. */
-@media (max-width: 34rem) {
-  header {
-    flex-wrap: wrap;
-    row-gap: 0.35rem;
-  }
-  .crumbs {
-    order: 10;
-    flex-basis: 100%;
+  .pathbar {
+    padding: 0 0.55rem 0.4rem;
   }
 }
 
@@ -452,6 +567,110 @@ main {
   background: var(--hover);
   border-color: var(--line-strong);
 }
+
+/* --- saved places --- */
+/* Quieter than the two destinations above them: these are shortcuts, and a
+   shortcut that shouts as loudly as the thing it is a shortcut to makes the
+   screen a wall of equal choices. */
+.places {
+  margin-top: 0.75rem;
+}
+.places h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0.35rem 0.25rem;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.places h2 button {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  font-weight: 400;
+}
+/* The row and its dismiss button are siblings, not nested: a <button> inside a
+   <button> is invalid and browsers recover from it by dropping one of them. */
+.place {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.places .row {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0.45rem 0.6rem;
+  font-size: 1rem;
+  font-weight: 400;
+  min-height: 2.75rem;
+}
+.places .row:hover {
+  background: var(--hover);
+}
+.places .row .icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+}
+.places .row .icon[data-kind='folder'] {
+  color: var(--ico-folder);
+}
+.places .row .name {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+/* The way to the folder, under its name. Small and grey because it is there to
+   disambiguate three folders called 문서, not to be read every time. */
+.places .trail {
+  font-size: var(--t-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.place-forget {
+  flex: none;
+  opacity: 0;
+}
+.place:hover .place-forget,
+.place:focus-within .place-forget {
+  opacity: 1;
+}
+/* No hover on a touch screen, so a control revealed by one is simply absent. */
+@media (hover: none) {
+  .place-forget {
+    opacity: 1;
+  }
+}
+
+/* Shown only when both lists are empty, which is the first visit on a machine
+   -- exactly the moment when nobody knows what is here. */
+.start-hint {
+  margin: 1.25rem 0.35rem 0;
+  padding: 1.1rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+  color: var(--muted);
+  line-height: 1.7;
+  text-align: center;
+}
+.start-hint button {
+  display: inline-flex;
+  margin: 0.85rem auto 0;
+}
+/* An icon sitting inside a sentence, rather than beside a label. */
+.inline-ico {
+  display: inline-block;
+  vertical-align: -0.15em;
+  color: var(--fg-soft);
+}
 .row {
   display: flex;
   align-items: center;
@@ -522,6 +741,15 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Which characters the search matched.
+   A tint and a weight, not a highlighter: <mark>'s default yellow block is
+   loud enough to be the only thing on the screen, and a fuzzy match can put
+   six of them in one filename. */
+.row .name mark {
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
 }
 /* Fixed widths so the columns line up DOWN the list. Left to shrink-wrap, every
    row put its size and date in a different place and the eye had to re-find
@@ -636,12 +864,71 @@ main {
   color: var(--muted);
 }
 
-/* Shown only when the list is windowed, where the count is not otherwise
-   knowable and find-in-page quietly stops covering the whole directory. */
-.count {
-  padding: 1rem 0.6rem 0;
+/* --- results from below this directory --- */
+/* Separated from the folder's own rows, because they are a different kind of
+   answer: each one is somewhere else and says where. Run together they would
+   read as a listing of a directory containing files that are not in it. */
+.deep {
+  margin-top: 1.25rem;
   border-top: 1px solid var(--line);
-  margin: 0.5rem 0 0;
+  padding-top: 0.5rem;
+}
+.deep h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0.6rem 0.15rem;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.deep h2 span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+.deep .row .name {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  /* The two lines need the row's full height rather than the single-line
+     baseline the listing above uses. */
+  white-space: normal;
+}
+/* Which folder it is in. Small and grey: it disambiguates, it is not the
+   answer. */
+.deep .trail {
+  font-size: var(--t-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deep .deep-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deep .deep-name mark {
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+.deep-note {
+  margin: 0.35rem 0;
+  padding: 0 0.6rem;
+}
+
+/* Shown when the list is windowed -- where the count is not otherwise knowable
+   and find-in-page quietly stops covering the whole directory -- and when a
+   search is narrowing it, where the interesting number is how much of the
+   folder you are NOT being shown. */
+.count {
+  padding: 0.6rem 0.6rem 0.35rem;
+  border-top: 1px solid var(--line);
+  margin: 0.25rem 0 0;
 }
 
 /* Skeletons, not "불러오는 중…": the list keeps its shape while it loads, so
@@ -755,6 +1042,155 @@ main {
   font-size: var(--t-xs);
   color: var(--muted);
   font-weight: 500;
+}
+
+/* --- the menu card (Radix Popover) --- */
+/* One button in the corner opens everything that is not a file: what this
+   session is, where else you can go, and how to leave. Two columns because the
+   two halves answer different questions -- the left is about this account, the
+   right is about where to be -- and stacking them would make the second one a
+   scroll away. */
+.card {
+  width: min(26rem, calc(100vw - 1.5rem));
+  /* Fixed, so the card is the same shape whether you are in three teams or
+     thirty and the list inside is what moves. Bounded by what Radix measured
+     between the trigger and the bottom of the window, so a short viewport (a
+     phone held sideways) gets a shorter card rather than one running off the
+     screen. */
+  height: min(20rem, var(--radix-popover-content-available-height, 20rem));
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0.5rem;
+  z-index: 60;
+  animation: menu-in 0.12s ease-out;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+.card-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  height: 100%;
+  /* Without this the grid refuses to shrink below its content and the scroll
+     lands on the page instead of on the folder list. */
+  min-height: 0;
+}
+.card-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+/* A hairline, so the two read as two lists rather than as one wide one with a
+   hole in the middle. */
+.card-col.folders {
+  border-left: 1px solid var(--line);
+  padding-left: 0.5rem;
+}
+.card-who {
+  margin: 0.1rem 0.6rem 0.35rem;
+  font-weight: 600;
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-label {
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  font-size: var(--t-xs);
+  color: var(--muted);
+  font-weight: 500;
+}
+/* Label above the control rather than beside it. Side by side they compete for
+   a column that is half a narrow card wide, and the switch is the one that
+   cannot give ground -- it is three targets. */
+.card-theme {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0 0.6rem 0.2rem;
+}
+.card-theme .card-label {
+  padding: 0.2rem 0;
+}
+.card-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 0.35rem 0.25rem;
+  flex: none;
+}
+/* Pushes everything after it to the bottom of the column. Leaving is the last
+   thing on the list and the only one here that ends the session. */
+.card-sep.push {
+  margin-top: auto;
+}
+
+.card-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  flex: none;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  min-height: 2.25rem;
+  text-align: left;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  color: var(--fg);
+  font-weight: 400;
+  border-radius: var(--r-sm);
+}
+.card-item .ico {
+  color: var(--muted);
+}
+.card-item .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+.card-item:hover:not(:disabled) .ico {
+  color: var(--fg);
+}
+/* Where you already are. Stated with aria-current in the markup, so this is the
+   sighted half of the same fact rather than the whole of it. */
+.card-item[aria-current='page'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+.card-item[aria-current='page'] .ico {
+  color: var(--accent);
+}
+
+.folder-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Visible, unlike the breadcrumbs': there the bar is a nuisance sitting on
+     the path, here it is the only thing saying the list continues. */
+  scrollbar-width: thin;
+  /* Scrolling past the end of this list must not start scrolling the directory
+     behind the card. */
+  overscroll-behavior: contain;
+}
+.folder-note {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+}
+
+/* The switch is inside a half-width column here, not in a header with room to
+   spare. */
+.card .seg button {
+  padding: 0.28rem 0.42rem;
 }
 
 /* --- dialogs --- */
