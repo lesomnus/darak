@@ -39,9 +39,21 @@ type Runner interface {
 	Run(ctx context.Context, stdin, name string, args ...string) (string, error)
 }
 
-// namePattern is the account-name shape usersync enforces. Checking it here too
-// keeps a name that could never be a real account from reaching an exec.
-var namePattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+// namePattern is the account-name shape usersync enforces (its
+// roster.NamePattern). Checking it here too keeps a name that could never be a
+// real account from reaching an exec.
+//
+// The two have to stay in step. A name usersync will create but this refuses is
+// an account that exists, mounts over SMB, and cannot sign in to the web -- with
+// the same 401 as a wrong password, so nobody can tell why.
+//
+// The dot is allowed: `firstname.lastname` is what most organisations call
+// people. It was excluded once on smb.conf-injection grounds that do not
+// survive checking -- a dot cannot close a `[...]` section, only a newline can,
+// and shadow-utils refuses those itself. The FIRST character is what does the
+// work here: it forbids a leading '-' (which ntlm_auth would read as a flag)
+// and a name of '.' or '..'.
+var namePattern = regexp.MustCompile(`^[a-z_][a-z0-9_.-]{0,31}$`)
 
 // NTLM verifies against Samba's passdb by asking ntlm_auth.
 type NTLM struct {

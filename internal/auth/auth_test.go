@@ -146,6 +146,8 @@ func TestRefusedWithoutRunning(t *testing.T) {
 		"leading dash":    {"-skim", "pw"},
 		"newline in name": {"skim\nAuthenticated: yes", "pw"},
 		"path separator":  {"../root", "pw"},
+		"leading dot":     {".hidden", "pw"},
+		"dot dot":         {"..", "pw"},
 		"too long":        {strings.Repeat("a", 33), "pw"},
 		"empty password":  {"skim", ""},
 	} {
@@ -160,6 +162,32 @@ func TestRefusedWithoutRunning(t *testing.T) {
 			}
 			if r.name != "" {
 				t.Errorf("nothing should have been executed, ran %q %v", r.name, r.args)
+			}
+		})
+	}
+}
+
+// `firstname.lastname` is what most organisations call people, and usersync
+// creates exactly those accounts (its roster.NamePattern allows a dot). If this
+// package refused them, the account would exist, mount over SMB, and answer the
+// web login with the same 401 as a wrong password -- with nothing anywhere
+// saying why.
+func TestDottedNamesAreAllowedThrough(t *testing.T) {
+	for _, user := range []string{"minseok.yang", "seunghyun.hwang", "a.b.c"} {
+		t.Run(user, func(t *testing.T) {
+			r := &fakeRunner{out: "OK\n"}
+			ok, err := (NTLM{Runner: r}).Authenticate(context.Background(), user, "pw")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Error("must authenticate")
+			}
+			if r.name == "" {
+				t.Fatal("refused before running; the name never reached ntlm_auth")
+			}
+			if !strings.Contains(r.stdin, user) {
+				t.Errorf("stdin %q does not carry the name", r.stdin)
 			}
 		})
 	}
