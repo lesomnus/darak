@@ -8,6 +8,13 @@ Design: [`nas-design.md`](./nas-design.md). Helper protocol:
 [`docs/helper-protocol.md`](./docs/helper-protocol.md). Accounts are managed
 separately by [usersync](https://github.com/lesomnus/usersync).
 
+| | |
+| --- | --- |
+| [`docs/using.md`](docs/using.md) | for the people who will use it — web, SMB, the trash, what is not recoverable |
+| [`deploy/prod/README.md`](deploy/prod/README.md) | deploying it (docker compose) |
+| [`docs/kubernetes.md`](docs/kubernetes.md) | deploying it on Kubernetes, and what breaks there |
+| [`docs/http-api.md`](docs/http-api.md) | the HTTP contract |
+
 ## The one idea
 
 The server runs as root and must act as the requesting user. Rather than
