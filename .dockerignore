@@ -6,3 +6,8 @@ node_modules
 web/node_modules
 # Only the repo-root build output: internal/ui/dist is the embedded interface.
 /dist
+
+# The bake definition and the compose files describe how to build; they are
+# never inputs to a build.
+/docker-bake.hcl
+/deploy/*/docker-compose.yaml

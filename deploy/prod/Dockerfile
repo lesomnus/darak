@@ -26,6 +26,16 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/darak ./cmd/darak \
 	&& CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/darak-helper ./cmd/darak-helper
 
+# The tests, as a build stage, so CI gates on the same layers the image is made
+# of rather than on a separate checkout that could differ.
+#
+# `internal/lint` runs here too: it is the check that the server never resolves
+# a path itself, and it is a plain Go test precisely so it cannot be skipped by
+# forgetting a step in a pipeline.
+FROM build AS test
+RUN --mount=type=cache,target=/root/.cache/go-build \
+	go vet ./... && go test ./...
+
 # usersync owns the accounts. It is a separate repository, pinned above so an
 # image is reproducible.
 FROM golang:1.26-trixie AS usersync
@@ -46,7 +56,7 @@ RUN CGO_ENABLED=0 go install -trimpath \
 		exit 1; \
 	} >&2
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim AS app
 
 # samba     — smbd, the other access path
 # winbind   — ntlm_auth, which the web path uses to check passwords, and the

@@ -54,6 +54,18 @@ go build -o darak-helper ./cmd/darak-helper
 sudo ./darak -root /srv/data -helper ./darak-helper -secure-cookies=false
 ```
 
+Or as the image CI publishes:
+
+```sh
+docker buildx bake              # tests: unit, vet, internal/lint, integration
+docker buildx bake app          # the image itself
+docker pull ghcr.io/lesomnus/darak:edge
+```
+
+`docker-bake.hcl` is the build definition; `.github/workflows/ci.yaml` runs it.
+The tests are stages of the production Dockerfile, so CI gates on the same
+layers the shipped image is made of rather than on a separate checkout.
+
 Root is required: helpers are started as the requesting user. `winbindd` must be
 running even on a standalone Samba, because `ntlm_auth` is a winbind client.
 

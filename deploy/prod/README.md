@@ -17,7 +17,7 @@ docker compose up -d --build
 usersync는 아직 태그된 릴리즈가 없어서 **커밋 해시**로 고정합니다:
 
 ```
-USERSYNC_VERSION=b0fe5b8da659bc0bd542289e4f8dfabfafcbb231
+USERSYNC_VERSION=83694507d0c3e664abe31683c77d348e80c1c1fa
 ```
 
 `lesomnus/usersync`의 `main` HEAD입니다. 올릴 때는 그 저장소에서 `git rev-parse HEAD`를

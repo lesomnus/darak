@@ -1,0 +1,133 @@
+name: ci
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths: &paths
+      - .github/workflows/ci.yaml
+      - .dockerignore
+      - cmd/**
+      - deploy/prod/Dockerfile
+      - deploy/prod/entrypoint.sh
+      - docker-bake.hcl
+      - Dockerfile.test
+      - go.mod
+      - go.sum
+      - internal/**
+      - scripts/**
+      - web/**
+  pull_request:
+    branches:
+      - master
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: *paths
+
+# One run per branch. A push that supersedes another mid-build is the common
+# case, and finishing the older one publishes nothing anybody wants.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The interface is BUILD OUTPUT that is committed (internal/ui/dist), which is
+  # what lets `go build` alone produce a working server. Nothing inside a Go
+  # test can know whether it is current -- only rebuilding can -- so that check
+  # lives here, and the image job waits for it. Publishing an image built from a
+  # stale bundle is exactly the failure the committed-output arrangement invites.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Type-check and test
+        working-directory: web
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm test
+
+      # Fails if rebuilding web/ produces something other than what is
+      # committed. It restores the tree afterwards, so this is safe to run here.
+      - name: internal/ui/dist is current
+        run: scripts/build-ui.sh --check
+
+  image:
+    runs-on: ubuntu-latest
+    needs: web
+
+    # GITHUB_TOKEN needs `packages: write` to push to GHCR, and nothing else.
+    permissions:
+      contents: read
+      packages: write
+
+    # The digest of what was just pushed. It is what bake reported, not what the
+    # tag resolves to now -- asking the registry again would answer "whatever
+    # `edge` points at", and between the push and the question that can be
+    # somebody else's build.
+    outputs:
+      digest: ${{ steps.push.outputs.metadata && fromJSON(steps.push.outputs.metadata)['app']['containerimage.digest'] }}
+
+    env:
+      TAG: edge
+      BUILD_HASH: ${{ github.sha }}
+      BUILD_ID: r${{ github.run_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # The cache is named per target, and only the targets that have something
+      # to cache get one. `app` is the image assembly -- apt plus three COPYs of
+      # binaries the other targets already compiled -- so a cache there would be
+      # a round trip for layers that are about to be pushed anyway.
+      - name: Test
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: docker-bake.hcl
+          targets: test,integration
+          set: |
+            test.cache-from=type=gha,scope=test
+            test.cache-to=type=gha,scope=test,mode=max
+            integration.cache-from=type=gha,scope=integration
+            integration.cache-to=type=gha,scope=integration,mode=max
+
+      # Only from master. The registry holds what is deployable, and a branch
+      # that has not been merged is not that.
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        id: push
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: docker-bake.hcl
+          targets: app
+          push: true
+          set: |
+            app.cache-from=type=gha,scope=app
+
+      - name: Summary
+        if: steps.push.outcome == 'success'
+        run: |
+          {
+            echo "| | |"
+            echo "|---|---|"
+            echo "| image | \`ghcr.io/${{ github.repository }}:edge\` |"
+            echo "| digest | \`${{ fromJSON(steps.push.outputs.metadata)['app']['containerimage.digest'] }}\` |"
+            echo "| revision | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

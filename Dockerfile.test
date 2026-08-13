@@ -1,12 +1,15 @@
 # Image for the integration tests. They need real, separate unix users, which
 # needs root, which is why they do not run on a developer's machine.
 #
-# Built from a tar on stdin so it works against a remote or sidecar docker
-# daemon with no bind mounts:
+# Two ways in, and they build the same layers:
 #
+#   docker buildx bake integration              # runs them AT BUILD TIME (CI)
 #   tar -c --exclude=.git . | docker build -f Dockerfile.test -t darak-test -
-#   docker run --rm darak-test
-FROM golang:1.26-trixie
+#   docker run --rm darak-test                  # runs them interactively
+#
+# The tar form exists so this works against a remote or sidecar docker daemon
+# with no bind mounts. See scripts/verify-integration.sh.
+FROM golang:1.26-trixie AS base
 
 # samba + winbind so the ntlm_auth contract is checked against the real thing
 # rather than against what its documentation was read to mean.
@@ -21,4 +24,17 @@ COPY . .
 RUN go build -trimpath -o /usr/local/bin/darak-helper ./cmd/darak-helper \
 	&& chmod 0755 /usr/local/bin/darak-helper
 
+# The tests as a BUILD step, so a bake target can gate on them with no second
+# `docker run` and no image to keep afterwards.
+#
+# A build RUN is root in a fresh container, which is exactly what these need:
+# they create real accounts and check that the kernel refuses one user another's
+# files. Nothing here is privileged.
+FROM base AS integration
+RUN go test -tags integration -count 1 ./internal/integration/
+
+# Last, so it stays the default stage: `docker build -f Dockerfile.test .`
+# produces something to RUN rather than something that has already run. The two
+# share every layer above, so having both costs nothing.
+FROM base
 CMD ["go", "test", "-tags", "integration", "-count", "1", "-v", "./internal/integration/"]
