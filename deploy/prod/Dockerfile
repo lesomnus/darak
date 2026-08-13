@@ -61,10 +61,11 @@ FROM debian:trixie-slim AS app
 # samba     — smbd, the other access path
 # winbind   — ntlm_auth, which the web path uses to check passwords, and the
 #             domain client when an on-prem AD arrives
-# acl, attr — POSIX ACLs and xattrs on the data volume
+# acl, attr     — POSIX ACLs and xattrs on the data volume
+# inotify-tools — inotifywait, the entrypoint's roster hot-reload watcher
 RUN apt-get update -qq \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-		samba samba-common-bin winbind acl attr ca-certificates tzdata curl \
+		samba samba-common-bin winbind acl attr ca-certificates tzdata curl inotify-tools \
 	&& rm -rf /var/lib/apt/lists/* \
 	# Debian's samba package ships an /etc/samba/smb.conf with [homes],
 	# [printers] and [print$] already in it. The entrypoint seeds its own global

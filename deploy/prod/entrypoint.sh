@@ -251,6 +251,45 @@ for _ in $(seq 100); do
 done
 wbinfo -p >/dev/null 2>&1 || die "winbindd did not become ready; web logins would all fail"
 
+# --- hot-reload -------------------------------------------------------------
+#
+# Watch the config directory and re-apply the roster when it changes, so an
+# account add / rename / team change lands WITHOUT a restart. Sessions live in
+# process memory, so a restart logs everyone out; that cost is what makes people
+# route account changes through a redeploy and then not do them. GitOps stays
+# the source of truth: something updates roster.yaml in place -- a fixed-name
+# ConfigMap whose directory mount kubelet refreshes, or a writable mount an
+# operator edits -- and this reconciles the running system to it.
+#
+# Watch the DIRECTORY, not the file. A ConfigMap update does not rewrite the
+# file in place; it writes a new timestamped dir and swaps the `..data` symlink,
+# so a watch pinned to the file's inode sees the first change and never another.
+# Watching the mount dir catches the symlink swap (create/move) as well as a
+# plain in-place edit (close_write).
+#
+# `manage` mode only. In `audit` a directory service owns the accounts and
+# usersync must not apply -- honor the same gate the boot path does.
+if [[ ${mode:-manage} != audit ]] && command -v inotifywait >/dev/null 2>&1; then
+	(
+		while inotifywait -qq -e close_write,create,delete,move "$CONFIG_DIR" >/dev/null 2>&1; do
+			sleep 2   # let the ConfigMap symlink swap settle before reading
+			log "config changed -> hot-reload"
+			# validate first: a bad roster must leave the running system untouched,
+			# exactly as it does at boot. apply is idempotent and does no
+			# destructive deletes, so re-running it on any change is safe.
+			if ( cd "$CONFIG_DIR" && usersync validate >/dev/null 2>&1 && usersync apply && usersync shares --write >/dev/null 2>&1 ); then
+				smbcontrol smbd reload-config >/dev/null 2>&1 || true
+				log "hot-reload: applied"
+			else
+				echo "hot-reload: roster invalid or apply failed -- system left unchanged" >&2
+			fi
+		done
+	) &
+	log "hot-reload watcher on $CONFIG_DIR (pid $!)"
+else
+	log "hot-reload watcher off (mode=${mode:-manage}, inotifywait $(command -v inotifywait >/dev/null 2>&1 && echo present || echo missing))"
+fi
+
 # --- go ---------------------------------------------------------------------
 
 log "darak"
