@@ -4,11 +4,10 @@
 #   docker buildx bake app              # build the image locally
 #   docker buildx bake app --push       # with REPO/TAG set
 #
-# Modelled on Holiday-Robot/vpn's, with one structural difference: vpn ships a
-# static binary into `scratch`, so its build exports to ./dist and a second
-# Dockerfile assembles the image. darak cannot -- it runs Samba, creates unix
-# accounts and spawns helpers as other users, so the image is Debian with the
-# binaries in it. There is nothing to export and no second file.
+# The image is Debian, not `scratch`. A Go server usually ships as one static
+# binary into an empty image, and this one cannot: it runs Samba, creates unix
+# accounts, and spawns helpers as other users. So there is nothing to export
+# and no second Dockerfile -- `app` is the last stage of the one that builds.
 
 variable "REPO" {
   # The owner is part of the path, and GHCR is unforgiving about it: pushing to
@@ -42,9 +41,8 @@ variable "APP_VERSION" {
 }
 
 # One platform by default. The image installs Samba from apt, so a second
-# architecture is a second full apt resolution under emulation rather than a
-# second `go build` -- minutes, not seconds. karina is amd64; add arm64 here
-# when something needs it.
+# architecture costs a full apt resolution under emulation rather than a second
+# `go build` -- minutes, not seconds. Add one here when a deployment needs it.
 variable "PLATFORMS" {
   default = "linux/amd64"
 }
