@@ -1677,11 +1677,20 @@ dialog menu {
   position: relative;
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
-.preview-host,
-.preview-host > * {
-  min-height: 100%;
+/* A flex column with a DEFINITE height (from the dialog's fixed height down the
+   flex chain), so a fill renderer like Monaco has a real height to measure —
+   the reason it collapsed to a sliver was a height:100% resolving against a
+   parent that only had min-height. Text/code overflow and scroll the host;
+   the editor and iframe fill it. */
+.preview-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
 }
 .preview-loading {
   position: absolute;
@@ -1722,8 +1731,9 @@ dialog menu {
 /* Monaco and the sandboxed iframe both want to fill the body. */
 .preview-editor,
 .preview-frame {
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
   border: 0;
   display: block;
 }
