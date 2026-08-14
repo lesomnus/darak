@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import { formatDate, formatSize } from '../lib/format'
 import { Icon } from './Icon'
+import { Identities } from './Identities'
 import type {
   ActivityEvent,
   ActivityReport,
@@ -27,12 +28,16 @@ import type {
 export function Admin({
   me,
   isAdmin,
+  sso,
   onError,
 }: {
   me: string
   /** Whether to fetch the administrator panels at all. A team owner is not an
    *  administrator and would get 404 from every one of them. */
   isAdmin: boolean
+  /** Whether a sign-on provider is configured. Without one the identity panel
+   *  has nothing to show and its routes answer 404. */
+  sso: boolean
   onError: (message: string) => void
 }) {
   const [inv, setInv] = useState<Inventory | null>(null)
@@ -132,6 +137,7 @@ export function Admin({
                   busy={busy === u.name}
                   onToggle={(enabled) => void setSmb(u.name, enabled)}
                   onReset={() => setResetting(u.name)}
+                  onError={onError}
                 />
               ))}
             </tbody>
@@ -145,6 +151,8 @@ export function Admin({
       </section>
       )}
 
+
+      {isAdmin && sso && <Identities users={inv?.users ?? []} onError={onError} />}
 
       {resetting && (
         <PasswordDialog
@@ -163,12 +171,14 @@ function UserRow({
   busy,
   onToggle,
   onReset,
+  onError,
 }: {
   user: AdminUser
   self: boolean
   busy: boolean
   onToggle: (enabled: boolean) => void
   onReset: () => void
+  onError: (message: string) => void
 }) {
   return (
     <tr>
@@ -202,11 +212,86 @@ function UserRow({
             {user.smb.enabled ? '잠금' : '해제'}
           </button>
         )}
+        <InitialPassword user={user.name} onError={onError} />
         <button type="button" className="ghost" disabled={busy} onClick={onReset}>
-          비밀번호
+          재설정
         </button>
       </td>
     </tr>
+  )
+}
+
+/**
+ * Reveals the seed-derived initial password, so onboarding somebody does not
+ * mean a shell on the node.
+ *
+ * Two things this is careful about.
+ *
+ * It is fetched ON DEMAND, one user at a time, rather than being a column.
+ * A table that renders everybody's credential is one screenshot away from
+ * being a credential dump, and the server logs each reveal by name — which is
+ * only meaningful if a reveal is an act rather than a page load.
+ *
+ * And it can come back empty. usersync recomputes the same value forever and
+ * has no idea whether the person has since changed theirs, so the server
+ * verifies it first and says nothing rather than something false. That case is
+ * not an error; it is the normal state of anybody who followed the advice to
+ * change their password.
+ */
+function InitialPassword({ user, onError }: { user: string; onError: (m: string) => void }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'shown' | 'changed'>('idle')
+  const [value, setValue] = useState('')
+
+  async function reveal() {
+    setState('loading')
+    try {
+      const res = await api.adminInitialPassword(user)
+      if (res.still_initial && res.password) {
+        setValue(res.password)
+        setState('shown')
+      } else {
+        setState('changed')
+      }
+    } catch (e) {
+      setState('idle')
+      onError(e instanceof Error ? e.message : '읽지 못했습니다.')
+    }
+  }
+
+  if (state === 'shown') {
+    return (
+      <span className="initial-pw">
+        <code>{value}</code>
+        <button
+          type="button"
+          className="icon"
+          title="복사"
+          onClick={() => void navigator.clipboard?.writeText(value)}
+        >
+          <Icon name="copy" size={16} />
+        </button>
+        <button type="button" className="icon" title="숨기기" onClick={() => setState('idle')}>
+          <Icon name="close" size={16} />
+        </button>
+      </span>
+    )
+  }
+  if (state === 'changed') {
+    return (
+      <span className="muted small" title="본인이 바꿨습니다. 지금 비밀번호는 아무도 볼 수 없습니다 — 재설정만 가능합니다.">
+        변경됨
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className="ghost"
+      disabled={state === 'loading'}
+      onClick={() => void reveal()}
+    >
+      {state === 'loading' ? '확인 중…' : '초기 비밀번호'}
+    </button>
   )
 }
 

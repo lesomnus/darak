@@ -71,6 +71,114 @@ export interface Me {
 export interface Branding {
   name: string
   logo: boolean
+  /**
+   * Whether a provider is CONFIGURED, not whether it is reachable. The button
+   * is drawn either way: an outage explains itself far better than a missing
+   * button does.
+   */
+  sso: boolean
+}
+
+/**
+ * A one-off message from the sign-on callback.
+ *
+ * Fetched by id rather than read out of the URL, so the text is the server's
+ * and not something a link can choose.
+ */
+export interface SSONotice {
+  /** '' when there is nothing to say, 'pending' or 'error'. */
+  kind: string
+  message?: string
+  /** The address the provider asserted, so the person can quote it. */
+  address?: string
+}
+
+/** One approved binding of a directory identity to an account. */
+export interface IdentityMapping {
+  account: string
+  emails: string[]
+  issuer?: string
+  /** The provider's immutable handle, recorded at first sign-in. */
+  subject?: string
+  approved_by?: string
+  approved_at?: string
+  updated_at?: string
+}
+
+/** An identity that signed in and has no mapping yet. It grants nothing. */
+export interface IdentityRequest {
+  issuer: string
+  subject: string
+  emails: string[]
+  name?: string
+  first_seen: string
+  last_seen: string
+  count: number
+}
+
+/** A mapping the roster does not agree with. Reported, never enforced. */
+export interface IdentityProblem {
+  account: string
+  /** 'unknown', 'disabled' or 'reserved'. */
+  code: string
+}
+
+export interface IdentityView {
+  mappings: IdentityMapping[]
+  pending: IdentityRequest[]
+  problems: IdentityProblem[]
+  warning?: string
+}
+
+/**
+ * One auto-provisioning rule as it is currently applied.
+ *
+ * Read-only everywhere: the rules are a deployed file, because a page that
+ * could edit them would be a way to grant yourself an account. `bearer_file` is
+ * the PATH a token is read from — the token itself never leaves the server.
+ */
+export interface ProvisionRule {
+  name?: string
+  url: string
+  match: {
+    domains?: string[]
+    claims?: Record<string, string>
+  }
+  auth: {
+    bearer_file?: string
+  }
+}
+
+export interface ProvisionStatus {
+  path: string
+  loaded_at?: string
+  /** Short content hash, so an operator can tell which version is running. */
+  digest?: string
+  timeout?: string
+  wait?: string
+  rules: ProvisionRule[]
+  /**
+   * Set when the file on disk right now cannot be used. The rules above are
+   * then the last good ones, and they are still in force.
+   */
+  error?: string
+  error_at?: string
+}
+
+export interface ProvisionView {
+  enabled: boolean
+  status?: ProvisionStatus
+}
+
+export interface IdentityJournalEntry {
+  at: string
+  /** Empty when the server did it itself, which is what pinning is. */
+  by?: string
+  action: string
+  account?: string
+  issuer?: string
+  subject?: string
+  emails?: string[]
 }
 
 /**

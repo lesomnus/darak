@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,9 +23,12 @@ import (
 	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
 	"github.com/lesomnus/darak/internal/helperpool"
+	"github.com/lesomnus/darak/internal/identity"
+	"github.com/lesomnus/darak/internal/provision"
 	"github.com/lesomnus/darak/internal/run"
 	"github.com/lesomnus/darak/internal/server"
 	"github.com/lesomnus/darak/internal/share"
+	"github.com/lesomnus/darak/internal/sso"
 	"github.com/lesomnus/darak/internal/ui"
 	"github.com/lesomnus/darak/internal/vfs"
 )
@@ -42,6 +46,7 @@ func realMain() error {
 		root          = flag.String("root", "/srv/data", "the data tree to serve")
 		helperBin     = flag.String("helper", "darak-helper", "path to the helper binary")
 		ntlmAuthBin   = flag.String("ntlm-auth", "ntlm_auth", "path to ntlm_auth")
+		smbpasswdBin  = flag.String("smbpasswd", "smbpasswd", "path to smbpasswd, used when somebody changes their own password")
 		sessionTTL    = flag.Duration("session-ttl", 12*time.Hour, "how long a login lasts")
 		secureCookies = flag.Bool("secure-cookies", true, "mark the session cookie Secure (turn off only for plain-HTTP development)")
 		idleTimeout   = flag.Duration("helper-idle-timeout", helperpool.DefaultIdleTimeout, "how long an unused helper is kept")
@@ -60,6 +65,19 @@ func realMain() error {
 		smbLog        = flag.String("smb-log", "/var/log/samba/audit.log", "smbd's log, read for full_audit records; empty disables the SMB half")
 		brandName     = flag.String("brand-name", server.DefaultBrandName, "what the interface calls this installation, in the corner and in the page title")
 		brandLogo     = flag.String("brand-logo", "", "image file to draw in the corner instead of the built-in mark (svg, png, jpg, webp, gif, avif, ico; read once at startup)")
+
+		oidcIssuer     = flag.String("oidc-issuer", "", "OpenID Connect issuer URL; enables signing in with the company account (everything else here is ignored when empty)")
+		oidcClientID   = flag.String("oidc-client-id", "", "the application registered with the provider")
+		oidcSecretFile = flag.String("oidc-client-secret-file", "", "file holding the client secret; a file rather than a flag because argv is world-readable through /proc")
+		oidcRedirect   = flag.String("oidc-redirect-url", "", "the callback URL registered with the provider, e.g. https://darak.example.com/api/sso/callback")
+		oidcTenant     = flag.String("oidc-tenant", "", "required `tid` claim; mandatory for the multi-tenant Microsoft endpoints, where the issuer names no directory")
+		oidcDomains    = flag.String("oidc-email-domains", "", "comma-separated address domains to accept; empty accepts every address the tenant asserts")
+		identitiesFile = flag.String("identities", "/var/lib/darak/identities.json", "where approved identity mappings are kept; must NOT be on the data volume")
+		pendingFile    = flag.String("identity-requests", "/var/lib/darak/identity-requests.json", "where unapproved sign-in requests are queued")
+		journalFile    = flag.String("identity-journal", "/var/lib/darak/identity-journal.jsonl", "append-only record of every mapping change; empty disables it")
+
+		provisionFile = flag.String("provision-config", "", "rules for asking an external service to create an account for an SSO identity nobody has approved; empty means every unmapped identity waits for an administrator")
+		provisionPoll = flag.Duration("provision-reload", provision.DefaultPollInterval, "how often the provisioning rules are re-read; a broken file keeps the last good one")
 	)
 	flag.Parse()
 
@@ -152,6 +170,99 @@ func realMain() error {
 		defer acts.Close()
 	}
 
+	// Single sign-on, which is off unless an issuer is given.
+	//
+	// It adds a way to prove WHO somebody is. It adds no way to be allowed
+	// anything: the account behind an assertion is looked up here, and whether
+	// that account may sign in at all is still answered by the same tdbsam the
+	// password path asks (nas-design.md ADR-2). So `status: disabled` in the
+	// roster continues to close SMB, the password login and this one together.
+	var (
+		ssoProvider *sso.Provider
+		identities  *identity.Store
+		pending     *identity.Queue
+		journal     *identity.Journal
+		gate        server.AccountGate
+		provisioner *provision.Provisioner
+		watcher     *provision.Watcher
+	)
+	if *oidcIssuer != "" {
+		secret := ""
+		if *oidcSecretFile != "" {
+			secret, err = sso.ReadSecret(*oidcSecretFile)
+			if err != nil {
+				return err
+			}
+		}
+		ssoProvider, err = sso.New(sso.Config{
+			Issuer:       *oidcIssuer,
+			ClientID:     *oidcClientID,
+			ClientSecret: secret,
+			RedirectURL:  *oidcRedirect,
+			Tenant:       *oidcTenant,
+			Domains:      splitList(*oidcDomains),
+		})
+		if err != nil {
+			return err
+		}
+		// A malformed mapping file is fatal; see identity.NewFileStore. A
+		// malformed request queue is not, because it grants nothing and letting
+		// unreviewed input decide whether the server starts would be the worse
+		// failure.
+		identities, err = identity.NewFileStore(*identitiesFile)
+		if err != nil {
+			return err
+		}
+		pending, err = identity.NewFileQueue(*pendingFile)
+		if err != nil {
+			slog.Warn("starting with an empty access request queue", "err", err)
+		}
+		if *journalFile != "" {
+			journal, err = identity.NewJournal(*journalFile)
+			if err != nil {
+				return err
+			}
+		}
+		theGate := auth.Gate{
+			Resolver:   helperpool.NSSResolver{},
+			Runner:     run.Exec{},
+			PdbeditBin: "pdbedit",
+		}
+		gate = theGate
+
+		// Auto-provisioning. Off unless a rules file is named, and it is a FILE
+		// rather than anything editable from the page on purpose: this is the one
+		// path where an account can appear without an administrator acting, so
+		// what it may do has to be a reviewed, deployed artifact.
+		//
+		// A file that will not load is fatal here, unlike a reload: the operator
+		// asked for this by naming it, and coming up with it silently inert would
+		// send everybody to the approval queue with nothing saying why.
+		if *provisionFile != "" {
+			watcher, err = provision.NewWatcher(*provisionFile, *provisionPoll)
+			if err != nil {
+				return err
+			}
+			provisioner = &provision.Provisioner{
+				Config: watcher.Config,
+				Gate:   theGate,
+			}
+			slog.Info("auto-provisioning enabled", "config", *provisionFile,
+				"rules", len(watcher.Config().Rules))
+		}
+		// Discovery now rather than on the first click, so a mistyped issuer is
+		// an error in the log at boot. It is a warning and not a failure: the
+		// password path has to keep working, and it is needed most when the
+		// provider is the thing that is down.
+		warmCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := ssoProvider.Warm(warmCtx)
+		cancel()
+		if err != nil {
+			slog.Warn("the identity provider could not be reached; SSO will retry, "+
+				"and password sign-in is unaffected", "err", err)
+		}
+	}
+
 	fs := &vfs.FS{Pool: pool}
 	if acts != nil {
 		fs.Record = func(user, action, p, to string) {
@@ -168,13 +279,26 @@ func realMain() error {
 	}
 
 	srv, err := server.New(server.Config{
-		FS:            fs,
-		Activity:      acts,
-		Shares:        shares,
-		Admin:         adm,
-		UI:            web,
-		Brand:         brand,
-		Auth:          auth.NTLM{Runner: run.Exec{}, Path: *ntlmAuthBin},
+		FS:         fs,
+		Activity:   acts,
+		Shares:     shares,
+		Admin:      adm,
+		UI:         web,
+		Brand:      brand,
+		Auth:       auth.NTLM{Runner: run.Exec{}, Path: *ntlmAuthBin},
+		Passwords:  &auth.PasswordStore{Runner: run.Exec{}, Path: *smbpasswdBin},
+		SSO:        ssoProvider,
+		Identities: identities,
+		Pending:    pending,
+		Journal:    journal,
+		Gate:       gate,
+		Provision:  provisioner,
+		ProvisionConfig: func() provision.Status {
+			if watcher == nil {
+				return provision.Status{}
+			}
+			return watcher.Status()
+		},
 		SessionTTL:    *sessionTTL,
 		SecureCookies: *secureCookies,
 		MaxUpload:     *maxUpload,
@@ -187,6 +311,15 @@ func realMain() error {
 	defer stop()
 
 	go housekeeping(ctx, pool, srv, shares)
+	if watcher != nil {
+		// The rules reload without a restart, for the reason the roster does: a
+		// restart drops every session, and a cost like that is what makes people
+		// stop making changes through the mechanism that was built for them.
+		go watcher.Run(ctx.Done(), func(err error) {
+			slog.Warn("provisioning rules could not be reloaded; the last good ones are still in force",
+				"err", err)
+		})
+	}
 	if acts != nil && *smbLog != "" {
 		go acts.Tail(ctx.Done(), *smbLog, *root, func(err error) {
 			slog.Warn("could not record an SMB activity event", "err", err)
@@ -245,6 +378,18 @@ func realMain() error {
 	}
 }
 
+// splitList reads a comma-separated flag, dropping empties so a trailing comma
+// does not become an entry nothing can ever match.
+func splitList(s string) []string {
+	out := []string{}
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // housekeeping trims what would otherwise only grow.
 //
 // Both are also self-limiting on their own — the pool reaps before starting a
@@ -260,6 +405,7 @@ func housekeeping(ctx context.Context, pool *helperpool.Pool, srv *server.Server
 		case <-t.C:
 			pool.Reap()
 			srv.Sessions().Sweep()
+			srv.SweepSSO()
 			if err := shares.Sweep(); err != nil {
 				slog.Warn("could not persist the share store", "err", err)
 			}

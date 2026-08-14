@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -90,6 +91,70 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, rep)
+}
+
+// handleAdminInitialPassword shows the seed-derived initial password for one
+// user, so onboarding does not need a shell on the node.
+//
+// GET /api/admin/users/<name>/initial-password
+//
+// It is VERIFIED before it is shown. usersync recomputes the same value forever
+// — it has no idea whether the person has since changed theirs — so handing it
+// over unchecked means occasionally telling somebody their password is
+// something it is not, which presents as a broken login rather than as a stale
+// note. Asking the credential store first makes the answer either true or
+// absent.
+//
+// What this deliberately does NOT do is show a current password. tdbsam holds
+// an NT hash; there is nothing to show. For somebody who has changed theirs the
+// only route is a reset, which is the button next to this one.
+func (s *Server) handleAdminInitialPassword(w http.ResponseWriter, r *http.Request, name string) {
+	password, err := s.cfg.Admin.InitialPassword(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, admin.ErrUnknownUser) {
+			writeError(w, http.StatusNotFound, "관리 대상 계정이 아닙니다")
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "초기 비밀번호를 계산할 수 없습니다: "+err.Error())
+		return
+	}
+
+	ok, err := s.cfg.Auth.Authenticate(r.Context(), name, password)
+	if err != nil {
+		// Unverifiable. Showing it anyway would be showing something that may
+		// already be wrong, which is the failure this check exists to prevent.
+		writeError(w, http.StatusServiceUnavailable, "지금 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+		return
+	}
+
+	// Disclosure of a credential, by name, on request. Logged for that reason —
+	// it is the one thing on this page that hands over a way in rather than
+	// changing one.
+	slog.Warn("initial password revealed", "by", userOf(r), "user", name, "still_initial", ok)
+
+	// The value is a credential; it must not sit in a proxy or a browser cache.
+	w.Header().Set("Cache-Control", "no-store")
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"still_initial": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"still_initial": true, "password": password})
+}
+
+// handleAdminUserRead routes the read-only per-user operations.
+func (s *Server) handleAdminUserRead(w http.ResponseWriter, r *http.Request) {
+	rest := requestPath(r, "/api/admin/users/")
+	name, op, ok := strings.Cut(rest, "/")
+	if !ok || name == "" {
+		writeError(w, http.StatusBadRequest, "expected /api/admin/users/<user>/initial-password")
+		return
+	}
+	switch op {
+	case "initial-password":
+		s.handleAdminInitialPassword(w, r, name)
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 // handleAdminUserOp performs one of the roster-preserving account operations.

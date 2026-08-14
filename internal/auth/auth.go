@@ -39,6 +39,83 @@ type Runner interface {
 	Run(ctx context.Context, stdin, name string, args ...string) (string, error)
 }
 
+// MinPasswordLength is the only rule this server puts on a new password.
+//
+// There is no complexity policy on purpose. The rules that demand a symbol and
+// a digit are well established to push people toward one predictable pattern
+// and a sticky note, and this deployment's real defence is elsewhere: the
+// server is not on the internet (ADR-2's stated condition), and an account can
+// be shut in one line. A length floor is the part that actually buys something.
+const MinPasswordLength = 8
+
+// MaxPasswordLength bounds what will be handed to smbpasswd. Nothing here needs
+// a megabyte of password, and an unbounded field is an unbounded argument to a
+// subprocess.
+const MaxPasswordLength = 256
+
+// ErrWeakPassword means a proposed password cannot be used.
+var ErrWeakPassword = errors.New("auth: password rejected")
+
+// PasswordStore changes what tdbsam holds.
+//
+// The store is Samba's, not this server's: nothing here keeps a password or a
+// hash of one, and this type only knows how to ask smbpasswd. That is the whole
+// point of ADR-2 — one credential, one place — and it is why changing a
+// password from the web changes the SMB password too, because they are not two
+// things.
+type PasswordStore struct {
+	Runner Runner
+	// Path is the smbpasswd binary; empty means "smbpasswd" on PATH.
+	Path string
+}
+
+// CheckPassword reports whether a proposed password is usable.
+//
+// Exported so a caller can reject one before asking for the current password,
+// and so the same rule applies to an operator's reset and to somebody changing
+// their own.
+func CheckPassword(password string) error {
+	switch {
+	case len(password) < MinPasswordLength:
+		return fmt.Errorf("%w: at least %d characters", ErrWeakPassword, MinPasswordLength)
+	case len(password) > MaxPasswordLength:
+		return fmt.Errorf("%w: at most %d bytes", ErrWeakPassword, MaxPasswordLength)
+	}
+	// smbpasswd reads line-delimited input, so a newline would silently store a
+	// PREFIX of what was asked for — the person would then be unable to sign in
+	// with the password they believe they set.
+	if strings.ContainsAny(password, "\n\r\x00") {
+		return fmt.Errorf("%w: no newlines or null bytes", ErrWeakPassword)
+	}
+	return nil
+}
+
+// Set replaces a user's password.
+//
+// The password travels on stdin, never in argv, for the reason the ntlm_auth
+// call gives: argv is world-readable through /proc, and on a file server that
+// means publishing it to exactly the people the permissions exist to separate.
+// run.Exec's error text includes the command line and never stdin.
+//
+// smbpasswd -s reads the new password twice, which is why it is sent twice.
+func (p PasswordStore) Set(ctx context.Context, user, password string) error {
+	if !namePattern.MatchString(user) {
+		return fmt.Errorf("auth: not a possible account name: %q", user)
+	}
+	if err := CheckPassword(password); err != nil {
+		return err
+	}
+	bin := p.Path
+	if bin == "" {
+		bin = "smbpasswd"
+	}
+	stdin := password + "\n" + password + "\n"
+	if _, err := p.Runner.Run(ctx, stdin, bin, "-s", "-a", user); err != nil {
+		return fmt.Errorf("auth: set the password for %q: %w", user, err)
+	}
+	return nil
+}
+
 // namePattern is the account-name shape usersync enforces (its
 // roster.NamePattern). Checking it here too keeps a name that could never be a
 // real account from reaching an exec.

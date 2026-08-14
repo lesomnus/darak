@@ -282,6 +282,109 @@ textarea:focus-visible {
 .login button {
   margin-top: 0.75rem;
 }
+/* The sign-on button is deliberately the quieter of the two. Both routes lead
+   to the same files, and the one that always works — the password — should not
+   look like the fallback. */
+.login .button.sso {
+  margin-top: 0.25rem;
+  background: var(--surface);
+  color: var(--fg);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+}
+.login .button.sso:hover {
+  background: var(--hover);
+}
+/* A rule with a word in it, so the two ways in read as alternatives rather
+   than as steps. */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.35rem 0 !important;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+/* The permission presets. A column, because each one is a sentence rather than
+   a word and they read badly side by side. */
+.mode-presets {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0.5rem;
+}
+.mode-presets button {
+  justify-content: space-between;
+}
+.mode-presets code {
+  opacity: 0.75;
+}
+
+/* A revealed initial password. Monospace because it is meant to be read out or
+   copied, and it sits inline in the row so nothing about the layout invites a
+   screenshot of the whole table. */
+.initial-pw {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.initial-pw code {
+  user-select: all;
+  padding: 0.15rem 0.35rem;
+  background: var(--hover);
+  border-radius: var(--r-sm);
+}
+
+/* The provisioning rules: shown, never editable. Set apart from the tables
+   around it because it is the only thing on this page an administrator cannot
+   change from here, and that difference is the point. */
+.provisioning {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--hover);
+  padding: 0.75rem 0.9rem;
+  margin: 0.5rem 0 1rem;
+}
+.provisioning h3 {
+  margin-top: 0;
+}
+.provisioning .rules {
+  margin: 0.5rem 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.provisioning code {
+  word-break: break-all;
+}
+
+/* Waiting for an approval is not an error: nothing went wrong, and there is
+   something the person can do right now. */
+.notice {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--hover);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: var(--t-sm);
+}
+.notice p {
+  margin: 0 0 0.35rem !important;
+  color: var(--fg-soft) !important;
+}
+.notice p:last-child {
+  margin-bottom: 0 !important;
+}
+.notice code {
+  word-break: break-all;
+}
 
 /* --- chrome --- */
 /* Two rows: the bar, and the path under it.

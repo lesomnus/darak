@@ -11,6 +11,7 @@ separately by [usersync](https://github.com/lesomnus/usersync).
 | | |
 | --- | --- |
 | [`docs/using.md`](docs/using.md) | for the people who will use it — web, SMB, the trash, what is not recoverable |
+| [`docs/access-control.md`](docs/access-control.md) | who can read/write/delete what, as an O/X matrix — measured |
 | [`deploy/prod/README.md`](deploy/prod/README.md) | deploying it (docker compose) |
 | [`docs/kubernetes.md`](docs/kubernetes.md) | deploying it on Kubernetes, and what breaks there |
 | [`docs/http-api.md`](docs/http-api.md) | the HTTP contract |
@@ -44,7 +45,9 @@ ordinary at the call site. `internal/lint` fails the build if one appears.
 | `internal/helper` | every operation, resolved with `openat2(RESOLVE_BENEATH)` |
 | `internal/helperpool` | one helper per user; replaced when their groups change |
 | `internal/vfs` | the write protocol and the trash |
-| `internal/auth` | passwords, via `ntlm_auth` against Samba's passdb |
+| `internal/auth` | passwords, via `ntlm_auth` against Samba's passdb, and the sign-in gate |
+| `internal/sso` | signing in with a company account; it asserts who, never what |
+| `internal/identity` | which account an asserted identity belongs to, and who is waiting to be told |
 | `internal/server` | HTTP |
 | `internal/share` | capability links |
 | `web` | the browser interface (TypeScript, React, Vite) |
@@ -80,6 +83,13 @@ running even on a standalone Samba, because `ntlm_auth` is a winbind client.
 POST   /api/login              {"user":..., "password":...}
 POST   /api/logout
 GET    /api/whoami
+POST   /api/password           {"current":..., "new":...} — asks for the current
+                               one even though a session exists, and closes this
+                               person's other sessions
+
+GET    /api/sso/login          off unless -oidc-issuer is set, 404 otherwise
+GET    /api/sso/callback       identity in, account name out; the gate decides
+GET    /api/sso/notice         one-off message for the page it redirects to
 
 GET    /api/branding           no session — the login page carries the mark too
 GET    /api/branding/logo      the -brand-logo image, or 404
@@ -90,6 +100,11 @@ GET    /api/files/<path>       directory -> JSON listing; file -> content (Range
 PUT    /api/files/<path>       upload
 DELETE /api/files/<path>       move to the trash — NOT a delete
 POST   /api/dirs/<path>        mkdir, not mkdir -p
+GET    /api/mode/<path>        {"mode":"0640","dir":bool,"acl":bool} — acl says the
+                               file carries a POSIX ACL the mode bits do not show
+POST   /api/mode/<path>        {"mode":"0640"} — octal as a STRING; the kernel
+                               decides, except that dropping setgid from a team
+                               folder is refused
 
 POST   /api/shares             {"path":..., "password":..., "ttl_hours":...}
 GET    /api/shares             your own links

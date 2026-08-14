@@ -36,6 +36,7 @@ const (
 	OpStat
 	OpChmod
 	OpSetXattr
+	OpGetXattr
 	OpReadDir
 
 	opMax = OpReadDir
@@ -51,6 +52,7 @@ var opNames = [...]string{
 	OpStat:     "STAT",
 	OpChmod:    "CHMOD",
 	OpSetXattr: "SETXATTR",
+	OpGetXattr: "GETXATTR",
 	OpReadDir:  "READDIR",
 }
 
@@ -125,13 +127,18 @@ const (
 	// HasMore means the listing was truncated to fit MaxFrame. Resume by asking
 	// again with Request.Name set to the last entry returned.
 	HasMore uint8 = 1 << 3
+	// HasValue means a byte string follows — the value read by GETXATTR. It is
+	// distinct from "the value is empty": an xattr can hold zero bytes, and the
+	// absence of the xattr is reported as an errno (ENODATA), not as this bit
+	// being clear with a zero-length value.
+	HasValue uint8 = 1 << 4
 
 	// hasKnown is every defined bit. Undefined bits are refused in both
 	// directions rather than ignored: the two binaries are built together, so
 	// there is no version skew to be tolerant of, and a bit that survives
 	// decoding without meaning anything is a place for a peer to carry state the
 	// other side never agreed to.
-	hasKnown = HasFD | HasStat | HasEntries | HasMore
+	hasKnown = HasFD | HasStat | HasEntries | HasMore | HasValue
 )
 
 // Response is the reply to one Request, matched by ID. Responses may arrive in
@@ -149,6 +156,11 @@ type Response struct {
 
 	Stat    *Stat
 	Entries []DirEntry
+
+	// Value is the byte string returned by GETXATTR, present only when HasValue
+	// is set. It rides the same field space as a directory listing never does,
+	// so the two are mutually exclusive in practice.
+	Value []byte
 }
 
 // OK reports whether the operation succeeded.

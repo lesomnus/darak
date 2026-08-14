@@ -132,6 +132,12 @@ func (r *Response) Marshal() ([]byte, error) {
 			}
 		}
 	}
+	if has&HasValue != 0 {
+		var err error
+		if b, err = appendBytes(b, r.Value); err != nil {
+			return nil, err
+		}
+	}
 	if len(b) > MaxFrame {
 		return nil, ErrTooLarge
 	}
@@ -320,6 +326,9 @@ func UnmarshalResponse(b []byte) (*Response, error) {
 			}
 			r.Entries = append(r.Entries, e)
 		}
+	}
+	if r.Has&HasValue != 0 {
+		r.Value = c.bytes()
 	}
 	if err := c.done(); err != nil {
 		return nil, err

@@ -5,9 +5,14 @@ import {
   type Branding,
   type DiskReport,
   type DriftReport,
+  type IdentityJournalEntry,
+  type IdentityMapping,
+  type IdentityView,
   type Inventory,
   type Listing,
   type Me,
+  type ProvisionView,
+  type SSONotice,
   type SearchDone,
   type SearchHit,
   type TeamsView,
@@ -25,6 +30,10 @@ import {
  */
 export function filesUrl(path: string): string {
   return '/api/files/' + path.split('/').map(encodeURIComponent).join('/')
+}
+
+function modeUrl(path: string): string {
+  return '/api/mode/' + path.split('/').map(encodeURIComponent).join('/')
 }
 
 function dirsUrl(path: string): string {
@@ -95,6 +104,19 @@ export const api = {
 
   // No session required: the login page carries the mark as well.
   branding: () => request<Branding>('/api/branding'),
+
+  /**
+   * Changes this person's own password.
+   *
+   * The current one is required by the server even though a session exists; see
+   * internal/server/password.go. Answers with how many other sessions were
+   * closed, which is worth showing.
+   */
+  changePassword: (current: string, next: string) =>
+    request<{ sessions_closed: number }>('/api/password', {
+      method: 'POST',
+      body: { current, new: next },
+    }),
 
   login: (user: string, password: string) =>
     request<Me>('/api/login', { method: 'POST', body: { user, password } }),
@@ -184,6 +206,23 @@ export const api = {
   // the caller should not have asked.
   adminWhoami: () => request<AdminWhoami>('/api/admin/whoami'),
 
+  /**
+   * Changes a file's permission bits.
+   *
+   * Octal as a STRING: a JSON number would arrive as 640 decimal, which is 1200
+   * octal — a mode nobody asked for, with a setuid bit in it.
+   */
+  chmod: (path: string, mode: string) =>
+    request<void>(modeUrl(path), { method: 'POST', body: { mode } }),
+
+  /**
+   * What the permission dialog needs to warn accurately: the current mode, and
+   * whether the file carries a POSIX ACL that narrowing the mode could hide.
+   * `acl` is not derivable from the listing — it is not in the mode bits.
+   */
+  modeInfo: (path: string) =>
+    request<{ mode: string; dir: boolean; acl: boolean }>(modeUrl(path)),
+
   adminUsers: (signal?: AbortSignal) => request<Inventory>('/api/admin/users', { signal }),
 
   adminDisk: (signal?: AbortSignal) => request<DiskReport>('/api/admin/disk', { signal }),
@@ -205,11 +244,56 @@ export const api = {
       body: { enabled },
     }),
 
+  /**
+   * The seed-derived INITIAL password for a user.
+   *
+   * `still_initial: false` and no value means they have changed it — usersync
+   * would still print the derived one, and it would be wrong. There is no way
+   * to read a current password: tdbsam holds an NT hash.
+   */
+  adminInitialPassword: (user: string) =>
+    request<{ still_initial: boolean; password?: string }>(
+      `/api/admin/users/${encodeURIComponent(user)}/initial-password`,
+    ),
+
   adminSetPassword: (user: string, password: string) =>
     request<void>(`/api/admin/users/${encodeURIComponent(user)}/password`, {
       method: 'POST',
       body: { password },
     }),
+
+  // --- single sign-on ---
+  //
+  // Starting a sign-in is a NAVIGATION, not a fetch: the browser has to follow
+  // the redirect to the provider and come back with cookies of its own, which
+  // an XHR cannot do. So there is no method for it here — the login page sets
+  // location.href — and what is left is reading the message the callback left
+  // behind.
+  ssoNotice: (id: string) =>
+    request<SSONotice>(`/api/sso/notice?id=${encodeURIComponent(id)}`),
+
+  adminIdentities: (signal?: AbortSignal) =>
+    request<IdentityView>('/api/admin/identities', { signal }),
+
+  adminProvisioning: (signal?: AbortSignal) =>
+    request<ProvisionView>('/api/admin/provisioning', { signal }),
+
+  adminIdentityJournal: (signal?: AbortSignal) =>
+    request<{ entries: IdentityJournalEntry[] }>('/api/admin/identities/journal', { signal }),
+
+  approveIdentity: (account: string, issuer: string, subject: string) =>
+    request<IdentityMapping>('/api/admin/identities', {
+      method: 'POST',
+      body: { account, issuer, subject },
+    }),
+
+  discardIdentityRequest: (issuer: string, subject: string) => {
+    const q = new URLSearchParams({ issuer, subject })
+    return request<void>(`/api/admin/identities/pending?${q}`, { method: 'DELETE' })
+  },
+
+  forgetIdentity: (account: string) =>
+    request<void>(`/api/admin/identities/${encodeURIComponent(account)}`, { method: 'DELETE' }),
 
   // --- team ownership ---
   //

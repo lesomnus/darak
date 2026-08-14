@@ -19,7 +19,10 @@ import (
 	"github.com/lesomnus/darak/internal/activity"
 	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/identity"
+	"github.com/lesomnus/darak/internal/provision"
 	"github.com/lesomnus/darak/internal/share"
+	"github.com/lesomnus/darak/internal/sso"
 	"github.com/lesomnus/darak/internal/vfs"
 	"github.com/lesomnus/darak/internal/wire"
 	"golang.org/x/sys/unix"
@@ -29,6 +32,11 @@ import (
 type Config struct {
 	FS   *vfs.FS
 	Auth auth.Authenticator
+
+	// Passwords changes what tdbsam holds, for somebody changing their own.
+	// Nil makes /api/password a 404 — a deployment that cannot reach smbpasswd
+	// should not offer the button.
+	Passwords *auth.PasswordStore
 
 	// Shares issues capability links. Nil disables the feature entirely rather
 	// than silently accepting requests it cannot honour.
@@ -43,6 +51,34 @@ type Config struct {
 	// rather than 404, because unlike the admin surface there is nothing to
 	// conceal: the caller is already an administrator.
 	Activity *activity.Store
+
+	// SSO signs people in through an identity provider. Nil makes every /api/sso
+	// route a 404 and the login page draw no button — the password path is the
+	// one that is always there.
+	SSO *sso.Provider
+	// Identities translates what the provider asserts into an account name, and
+	// Pending holds the identities waiting for an operator to decide about.
+	// Both are required when SSO is set, and neither grants anything: what an
+	// account may do is still decided by the filesystem, and whether it may sign
+	// in at all is decided by Gate.
+	Identities *identity.Store
+	Pending    *identity.Queue
+	// Journal records every change to the mapping. Optional; without it the
+	// approvals still work and the history is simply not kept.
+	Journal *identity.Journal
+	// Gate answers whether an account may open a session. Required when SSO is
+	// set: the provider says who somebody is and knows nothing about whether
+	// this server still has an account for them.
+	Gate AccountGate
+
+	// Provision asks something outside this server to create an account for an
+	// identity nothing here answers for yet. Nil leaves every unmapped identity
+	// to the approval queue, which is the default and the conservative one.
+	Provision *provision.Provisioner
+	// ProvisionConfig reports the rules currently in force, for the operator
+	// page. Read-only by construction: the rules are a deployed file, and a page
+	// that could edit them would be a way to grant yourself an account.
+	ProvisionConfig func() provision.Status
 
 	// UI, if set, is served at / for anything that is not an API route.
 	UI http.Handler
@@ -68,11 +104,19 @@ const defaultMaxUpload = 64 << 30 // 64 GiB
 type Server struct {
 	cfg      Config
 	sessions *Sessions
+	flows    *sso.Flows
+	notices  *notices
 }
 
 func New(cfg Config) (*Server, error) {
 	if cfg.FS == nil || cfg.Auth == nil {
 		return nil, errors.New("server: FS and Auth are required")
+	}
+	// Half a sign-on configuration is worse than none: a provider with no way to
+	// resolve what it asserts would authenticate people into nothing, and one
+	// with no gate would let an approval outlive the account it points at.
+	if cfg.SSO != nil && (cfg.Identities == nil || cfg.Pending == nil || cfg.Gate == nil) {
+		return nil, errors.New("server: SSO needs Identities, Pending and Gate")
 	}
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = 12 * time.Hour
@@ -83,7 +127,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Brand.Name == "" {
 		cfg.Brand.Name = DefaultBrandName
 	}
-	return &Server{cfg: cfg, sessions: NewSessions(cfg.SessionTTL)}, nil
+	return &Server{
+		cfg:      cfg,
+		sessions: NewSessions(cfg.SessionTTL),
+		flows:    sso.NewFlows(),
+		notices:  newNotices(),
+	}, nil
 }
 
 // Sessions exposes the store so a caller can sweep it periodically.
@@ -95,6 +144,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/whoami", s.authed(s.handleWhoami))
+	// Behind authed, and it still asks for the current password: a session is a
+	// bearer token, and one that leaks must not be enough to take an account
+	// away from the person who owns it.
+	mux.HandleFunc("POST /api/password", s.authed(s.handlePassword))
+
+	// The sign-on routes take no session — they are how one is obtained — and
+	// answer 404 when no provider is configured, so a deployment without it looks
+	// like a build without it.
+	mux.HandleFunc("GET /api/sso/login", s.handleSSOLogin)
+	mux.HandleFunc("GET /api/sso/callback", s.handleSSOCallback)
+	mux.HandleFunc("GET /api/sso/notice", s.handleSSONotice)
 
 	// Not behind authed(): the login page carries the mark too, and it is drawn
 	// before anyone has signed in.
@@ -105,6 +165,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/files/", s.authed(s.handlePut))
 	mux.HandleFunc("DELETE /api/files/", s.authed(s.handleDelete))
 	mux.HandleFunc("POST /api/dirs/", s.authed(s.handleMkdir))
+	mux.HandleFunc("GET /api/mode/", s.authed(s.handleModeInfo))
+	mux.HandleFunc("POST /api/mode/", s.authed(s.handleChmod))
 	mux.HandleFunc("GET /api/search/", s.authed(s.handleSearch))
 
 	mux.HandleFunc("POST /api/shares", s.authed(s.handleShareCreate))
@@ -118,7 +180,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/disk", s.authed(s.adminOnly(s.handleAdminDisk)))
 	mux.HandleFunc("GET /api/admin/audit", s.authed(s.adminOnly(s.handleAdminAudit)))
 	mux.HandleFunc("GET /api/admin/activity", s.authed(s.adminOnly(s.handleActivity)))
+	mux.HandleFunc("GET /api/admin/users/", s.authed(s.adminOnly(s.handleAdminUserRead)))
 	mux.HandleFunc("POST /api/admin/users/", s.authed(s.adminOnly(s.handleAdminUserOp)))
+
+	// The identity mapping is an operator surface for the same reason resetting
+	// an SMB password is: it changes who can get in without touching the roster,
+	// which is the boundary internal/admin/ops.go draws.
+	mux.HandleFunc("GET /api/admin/identities", s.authed(s.adminOnly(s.ssoOnly(s.handleIdentityList))))
+	mux.HandleFunc("GET /api/admin/identities/journal", s.authed(s.adminOnly(s.ssoOnly(s.handleIdentityJournal))))
+	mux.HandleFunc("GET /api/admin/provisioning", s.authed(s.adminOnly(s.ssoOnly(s.handleProvisioning))))
+	mux.HandleFunc("POST /api/admin/identities", s.authed(s.adminOnly(s.ssoOnly(s.handleIdentityApprove))))
+	mux.HandleFunc("DELETE /api/admin/identities/pending", s.authed(s.adminOnly(s.ssoOnly(s.handleIdentityDiscard))))
+	mux.HandleFunc("DELETE /api/admin/identities/", s.authed(s.adminOnly(s.ssoOnly(s.handleIdentityForget))))
 
 	// Team ownership is a separate axis from the admin group: an owner may
 	// change their own team's membership and nothing else, so these are gated
@@ -353,6 +426,101 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleModeInfo answers what the mode dialog needs to warn accurately.
+//
+// GET /api/mode/<path> -> {"mode":"0640","dir":false,"acl":true}
+//
+// `acl` is the reason this is a request and not just a field the client already
+// has from the listing: whether a file carries a POSIX ACL is not in its mode
+// bits, and narrowing the group bits can silently mask a reader's access out.
+// The warning can only be concrete — "this file has extra permissions a change
+// may hide" — if the server looks.
+func (s *Server) handleModeInfo(w http.ResponseWriter, r *http.Request) {
+	user, p := userOf(r), requestPath(r, "/api/mode/")
+	if p == "" {
+		writeError(w, http.StatusBadRequest, "no path")
+		return
+	}
+	st, err := s.cfg.FS.Stat(r.Context(), user, p)
+	if err != nil {
+		writeFSError(w, err)
+		return
+	}
+	acl, err := s.cfg.FS.HasACL(r.Context(), user, p)
+	if err != nil {
+		// The mode is still worth returning; the ACL hint just degrades to
+		// unknown-so-warn-generically rather than failing the dialog.
+		acl = false
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode": fmt.Sprintf("%04o", st.Mode&0o7777),
+		"dir":  st.Mode&unix.S_IFMT == unix.S_IFDIR,
+		"acl":  acl,
+	})
+}
+
+// handleChmod changes a file's permission bits.
+//
+// POST /api/mode/<path>  {"mode": "0640"}
+//
+// Octal as a STRING. A JSON number would arrive as 640 decimal and mean 1200
+// octal, which is the kind of bug that silently makes a file setuid — and
+// `"0640"` is also how a person writes a mode, so the wire format matches what
+// the operator typed.
+//
+// Nothing here decides whether the change is permitted. chmod succeeds for the
+// file's owner and nobody else, and the helper runs as the session's user, so
+// the kernel answers exactly as it does for every other operation. What IS here
+// is one refusal that is not about permission at all; see below.
+func (s *Server) handleChmod(w http.ResponseWriter, r *http.Request) {
+	user, p := userOf(r), requestPath(r, "/api/mode/")
+	if p == "" {
+		writeError(w, http.StatusBadRequest, "no path")
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	mode, err := strconv.ParseUint(strings.TrimSpace(body.Mode), 8, 32)
+	if err != nil || mode > 0o7777 {
+		writeError(w, http.StatusBadRequest, `mode는 8진수 문자열이어야 합니다 (예: "0640")`)
+		return
+	}
+
+	st, err := s.cfg.FS.Stat(r.Context(), user, p)
+	if err != nil {
+		writeFSError(w, err)
+		return
+	}
+	isDir := st.Mode&unix.S_IFMT == unix.S_IFDIR
+
+	// A team directory that loses setgid keeps working for everything already in
+	// it and quietly breaks everything created afterwards: new files get the
+	// creator's own group instead of the team's, so their colleagues cannot open
+	// them. Nothing fails at the time, and the two events are weeks apart.
+	//
+	// This is not a permission decision — the kernel would allow it — it is a
+	// refusal to let one click break an invariant the rest of the system rests
+	// on. Clearing it deliberately is still possible over SMB or a shell.
+	if isDir && mode&unix.S_ISGID == 0 {
+		if domain, err := vfs.DomainRoot(p); err == nil && strings.HasPrefix(domain, "teams/") {
+			writeError(w, http.StatusConflict,
+				"팀 폴더에서 setgid(2xxx)를 빼면 이후 만들어지는 파일이 팀 그룹을 갖지 못합니다. "+
+					"2770처럼 앞에 2를 붙여 주세요.")
+			return
+		}
+	}
+
+	if err := s.cfg.FS.Chmod(r.Context(), user, p, uint32(mode)); err != nil {
+		writeFSError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- helpers ---
 
 // requestPath strips the route prefix. It does not clean or validate the
@@ -374,6 +542,16 @@ func urlEscape(s string) string {
 		b.WriteString("%" + strings.ToUpper(strconv.FormatUint(uint64(c), 16)))
 	}
 	return b.String()
+}
+
+// decodeBody reads a small JSON request body, answering 400 itself when it
+// cannot. It reports whether the caller should carry on.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(v); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed request")
+		return false
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

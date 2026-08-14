@@ -184,6 +184,26 @@ func (h *Helper) dispatch(req *wire.Request) (*wire.Response, int) {
 		}
 		return ok(req.ID)
 
+	case wire.OpGetXattr:
+		fd, err := h.resolve(req.Path, unix.O_RDONLY|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			return fail(req.ID, err)
+		}
+		defer unix.Close(fd)
+		// Two-call sizing: ask for the length, then read exactly that. A file
+		// with no such attribute answers ENODATA, which the server reads as
+		// "no ACL" rather than an error — the whole point of the call.
+		size, err := unix.Fgetxattr(fd, req.Name, nil)
+		if err != nil {
+			return fail(req.ID, err)
+		}
+		buf := make([]byte, size)
+		n, err := unix.Fgetxattr(fd, req.Name, buf)
+		if err != nil {
+			return fail(req.ID, err)
+		}
+		return &wire.Response{ID: req.ID, Has: wire.HasValue, Value: buf[:n]}, -1
+
 	case wire.OpReadDir:
 		return h.readDir(req)
 	}

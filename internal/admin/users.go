@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lesomnus/darak/internal/auth"
 )
 
 // User is one managed account as the system currently reports it.
@@ -236,39 +238,18 @@ func parseExportCSV(r io.Reader) ([]User, []Group, error) {
 }
 
 // smbAccounts reports which names have a tdbsam account and whether it is
-// enabled. `pdbedit -L -v` prints an "Account Flags" field where D means
-// disabled — the same bit `smbpasswd -d` sets.
+// enabled.
+//
+// The parsing lives in internal/auth because the sign-in gate asks the same
+// question of the same output, and two readers of `pdbedit -L -v` that drift
+// apart would disagree about who is suspended — this page saying one thing and
+// the login saying another.
 func (a *Admin) smbAccounts(ctx context.Context) (map[string]bool, error) {
 	out, err := a.cfg.Runner.Run(ctx, "", a.cfg.PdbeditBin, "-L", "-v")
 	if err != nil {
 		return nil, err
 	}
-	return parsePdbedit(out), nil
-}
-
-func parsePdbedit(out string) map[string]bool {
-	accounts := map[string]bool{}
-	current := ""
-	for _, line := range strings.Split(out, "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		switch key {
-		case "Unix username":
-			current = value
-			// Present until the flags say otherwise; a record with no flags line
-			// is still an account.
-			accounts[current] = true
-		case "Account Flags":
-			if current != "" {
-				accounts[current] = !strings.Contains(value, "D")
-			}
-		}
-	}
-	return accounts
+	return auth.ParseAccountFlags(out), nil
 }
 
 // Drift is one disagreement between the roster and the system.

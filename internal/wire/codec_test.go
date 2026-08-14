@@ -345,3 +345,25 @@ func FuzzUnmarshalResponse(f *testing.F) {
 		}
 	})
 }
+
+// A GETXATTR reply carries a byte value, and an EMPTY value is distinct from no
+// value at all — the HasValue bit, not the length, is what says one is present.
+func TestResponseValueRoundTrip(t *testing.T) {
+	for _, v := range [][]byte{{0x02, 0, 0, 0, 1, 2, 3, 4}, {}, {0xFF}} {
+		want := &Response{ID: 9, Has: HasValue, Value: v}
+		b, err := want.Marshal()
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		got, err := UnmarshalResponse(b)
+		if err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if got.Has&HasValue == 0 {
+			t.Errorf("HasValue lost for %v", v)
+		}
+		if !bytes.Equal(got.Value, v) {
+			t.Errorf("value = %v; want %v", got.Value, v)
+		}
+	}
+}

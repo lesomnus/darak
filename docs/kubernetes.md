@@ -15,7 +15,7 @@
 ```
 /etc/passwd, /etc/group, /etc/shadow   컨테이너 레이어. 볼륨 아님. 재시작하면 사라졌다 다시 생김
 /var/lib/samba/                        볼륨 — private/passdb.tdb (비밀번호), secrets.tdb (AD 조인 상태)
-/var/lib/darak/                        볼륨 — 공유 링크 토큰, 활동 기록
+/var/lib/darak/                        볼륨 — 공유 링크 토큰, 활동 기록, SSO 매핑·요청 큐
 /srv/data/                             볼륨 — 파일
 /etc/darak/                            roster.yaml, usersync.yaml  ※ 쓰기 가능해야 함 (아래)
 ```
@@ -49,7 +49,7 @@ uid=3001(alice) gid=3001(alice)    # 컨테이너 안
 | `/var/lib/samba` | **비밀번호.** 이것만 빠뜨리면 복구 후 아무도 로그인 못 합니다 |
 | `roster.yaml` (git) | 계정 선언. uid 장부 |
 
-`/var/lib/darak`은 잃어도 됩니다 — 공유 링크가 전부 죽는 정도입니다.
+`/var/lib/darak`은 잃어도 됩니다 — 공유 링크가 전부 죽고, SSO를 쓴다면 모두가 비밀번호 로그인으로 강등되는 정도입니다. 파일 접근은 영향받지 않습니다.
 
 ---
 

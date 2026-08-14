@@ -1,0 +1,72 @@
+# Auto-provisioning rules.
+#
+# cp provision.yaml.example provision.yaml and point -provision-config at it
+# (DARAK_PROVISION_CONFIG). Without the flag this file does nothing and every
+# unmapped SSO identity waits for an administrator to approve it.
+#
+# WHAT THIS TURNS ON, said plainly: somebody the identity provider vouches for
+# can end up with an account here without anybody clicking approve. That is a
+# policy decision, and it moves the decision from an administrator to whatever
+# the endpoint below implements. The `match` block is the net in front of that,
+# which is why it is worth filling in even when the endpoint has its own rules.
+#
+# WHAT IT DOES NOT CHANGE:
+#   - darak still does not create accounts. The endpoint does (by editing
+#     roster.yaml, opening a pull request, calling an HR system, whatever), and
+#     darak waits to see the account appear through NSS and tdbsam.
+#   - Offboarding is still one line in roster.yaml.
+#   - An identity is bound ONLY to an account that did not already exist when
+#     the endpoint answered. A hook naming an account that is already there is
+#     sent to the approval queue instead, so a broken endpoint can create junk
+#     accounts but cannot hand somebody another person's home directory.
+#
+# The file is re-read while the server runs. A broken edit is reported on the
+# operator page and leaves the previous rules in force.
+
+# How long to wait for the endpoint to answer.
+timeout: 10s
+
+# How long to watch for a created account to become usable.
+#
+# Not worth tuning. Exceeding it is not a failure: the request is left as
+# provisioning and the NEXT sign-in completes it, because by then the account is
+# simply there. The reconcile in entrypoint.sh settles for two seconds before it
+# applies, so anything above ten seconds is comfortable.
+wait: 30s
+
+rules:
+  # First match wins. An identity matching nothing goes to the approval queue,
+  # exactly as it does with no file at all.
+  - name: 정직원
+    match:
+      # At least one asserted address must be in one of these domains.
+      domains: [example.com]
+      # And every claim named here must match — equal for a scalar, contained
+      # for a list, which is what makes a groups claim usable.
+      claims:
+        employeeType: FullTime
+    # https, unless it is on loopback (a sidecar has no network to protect).
+    url: https://hr-bridge.internal/darak/provision
+    auth:
+      # Sent as `Authorization: Bearer <contents>`. A file, not a value here and
+      # not an environment variable: argv is world-readable through /proc, and
+      # helpers inherit this process's environment.
+      bearer_file: /run/secrets/provision-token
+
+# The endpoint receives:
+#
+#   POST <url>
+#   {"issuer": "...", "subject": "...", "emails": ["..."], "name": "..."}
+#
+# and answers:
+#
+#   201 {"account": "seunghyun.hwang"}  created it — darak waits, then signs
+#                                       them in with no approval
+#   200 {"account": "..."}              it already exists — approval queue
+#   202                                 accepted, not done (a pull request, say)
+#   403 / 404 / 204                     this person gets no account
+#   anything else                       treated as unavailable; approval queue
+#
+# 201 MUST carry the account name. Without it darak would be back to guessing
+# which new account belongs to which address, which is the guess this whole
+# design exists to remove.

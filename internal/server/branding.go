@@ -129,6 +129,11 @@ func (s *Server) handleBranding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": s.cfg.Brand.Name,
 		"logo": len(s.cfg.Brand.Logo) > 0,
+		// Whether to draw the sign-on button. It reports that a provider is
+		// CONFIGURED, not that it is reachable: hiding the button when the IdP is
+		// down would look like the flag never took effect, and the button itself
+		// explains the outage far better than its absence does.
+		"sso": s.cfg.SSO != nil,
 	})
 }
 

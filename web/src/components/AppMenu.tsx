@@ -26,6 +26,7 @@ export function AppMenu({
   onOpenChange,
   onNavigate,
   onShares,
+  onPassword,
   onSignOut,
 }: {
   user: string
@@ -46,6 +47,7 @@ export function AppMenu({
   onOpenChange: (open: boolean) => void
   onNavigate: (path: string) => void
   onShares: () => void
+  onPassword: () => void
   onSignOut: () => void
 }) {
   const setOpen = onOpenChange
@@ -126,6 +128,16 @@ export function AppMenu({
                 onClick={() => {
                   setOpen(false)
                   onShares()
+                }}
+              />
+              {/* Next to the share links rather than down by sign-out: it is
+                  something you do to your account, not a way of leaving. */}
+              <CardItem
+                icon="key"
+                label="비밀번호 변경"
+                onClick={() => {
+                  setOpen(false)
+                  onPassword()
                 }}
               />
               <CardItem

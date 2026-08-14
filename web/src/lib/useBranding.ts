@@ -13,7 +13,7 @@ import type { Branding } from '../types'
  * The fallback is not a loading state -- it is what an unconfigured deployment
  * gets, so nothing flashes and nothing is empty while the request is out.
  */
-const FALLBACK: Branding = { name: '파일 서버', logo: false }
+const FALLBACK: Branding = { name: '파일 서버', logo: false, sso: false }
 
 export function useBranding(): Branding {
   const [brand, setBrand] = useState<Branding>(FALLBACK)

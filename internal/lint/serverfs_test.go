@@ -93,13 +93,16 @@ const localStateMarker = "//darak:local-state"
 // maxExempt bounds how many files may carry the marker. An exemption mechanism
 // with no ceiling becomes the rule it was an exception to.
 //
-// Raising it is meant to be an argument, not a formality. The five today:
+// Raising it is meant to be an argument, not a formality. The eight today:
 //
 //	internal/share/file.go       the share-link store, at an operator-given path
 //	internal/helperpool/idmap.go /proc/self/uid_map, the process asking about itself
 //	internal/admin/disk.go       statfs on the -root flag, for the capacity report
 //	internal/activity/store.go   the activity log it owns, and smbd's log, read-only
 //	internal/server/branding.go  the -brand-logo image, read once before serving
+//	internal/identity/file.go    the SSO mapping and its approval queue, two flags
+//	internal/sso/secret.go       the OIDC client secret, read once at startup
+//	internal/provision/file.go   the provisioning rules and the token they send
 //
 // The fifth is the weakest of the five and still clears the bar: it resolves a
 // path INSIDE package server, which is where the rule bites hardest. What saves
@@ -117,10 +120,32 @@ const localStateMarker = "//darak:local-state"
 // and the file paths inside those records are strings it stores, not paths it
 // resolves.
 //
+// The sixth is the same shape as the first: a store the operator placed with a
+// flag, written by the server itself, holding no file anyone owns. What makes it
+// worth a second look is that a REQUEST can cause it to be written — an
+// unmapped SSO sign-in appends to the queue — which none of the other five do.
+// It still clears the bar, because what a request supplies never reaches the
+// path: the path is the flag, the request only supplies bytes that end up
+// inside the file. A caller who could aim the path would be a different thing
+// entirely, and is what the rule exists to prevent.
+//
+// The eighth is the only one that re-reads its path WHILE serving, because the
+// rules reload without a restart. That is a schedule, not a request: it polls a
+// fixed flag every few seconds and a caller cannot influence when it happens or
+// what it opens. What would not qualify is reloading on demand from a request,
+// however convenient — the path would still be a flag, but the timing would
+// belong to whoever asked.
+//
+// The seventh is branding.go's twin — a flag, read once, before serving — and
+// exists as its own file for the reason that one does: the alternative was
+// marking cmd/darak/main.go, which would exempt every future line of the
+// wiring instead of the four that need it. The check found this one; it was
+// written inline first.
+//
 // Anything that reads a user's file, or resolves a name a request supplied,
 // does not qualify however convenient the marker would be. That is the case the
 // helper exists for.
-const maxExempt = 5
+const maxExempt = 8
 
 func repoRoot(t *testing.T) string {
 	t.Helper()

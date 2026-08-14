@@ -64,6 +64,67 @@ if [[ -n ${DARAK_BRAND_LOGO:-} ]]; then
 	args+=(-brand-logo "$DARAK_BRAND_LOGO")
 fi
 
+# Signing in with the company account. Off unless an issuer is given.
+#
+# It adds a way to prove WHO somebody is and nothing else: which account that
+# is comes from the mapping in the state directory, and whether that account
+# may sign in is still answered by tdbsam on every attempt. So `status:
+# disabled` in the roster keeps closing SMB and the web together.
+if [[ -n ${DARAK_OIDC_ISSUER:-} ]]; then
+	[[ -n ${DARAK_OIDC_CLIENT_ID:-} ]] || die "DARAK_OIDC_ISSUER is set but DARAK_OIDC_CLIENT_ID is not"
+	[[ -n ${DARAK_OIDC_REDIRECT_URL:-} ]] ||
+		die "DARAK_OIDC_ISSUER is set but DARAK_OIDC_REDIRECT_URL is not — it must be the address a browser actually reaches this server on, e.g. https://darak.example.com/api/sso/callback"
+
+	args+=(
+		-oidc-issuer "$DARAK_OIDC_ISSUER"
+		-oidc-client-id "$DARAK_OIDC_CLIENT_ID"
+		-oidc-redirect-url "$DARAK_OIDC_REDIRECT_URL"
+		-identities "$STATE_DIR/identities.json"
+		-identity-requests "$STATE_DIR/identity-requests.json"
+		-identity-journal "$STATE_DIR/identity-journal.jsonl"
+	)
+	# `if`, not `[[ ... ]] && ...`: under `set -e` the one-liner form exits the
+	# script when the test is false, so an unset optional variable would stop the
+	# container from starting.
+	if [[ -n ${DARAK_OIDC_TENANT:-} ]]; then
+		args+=(-oidc-tenant "$DARAK_OIDC_TENANT")
+	fi
+	if [[ -n ${DARAK_OIDC_EMAIL_DOMAINS:-} ]]; then
+		args+=(-oidc-email-domains "$DARAK_OIDC_EMAIL_DOMAINS")
+	fi
+
+	# Auto-provisioning. Off unless a rules file is named, and it is read from
+	# the config mount because it is a reviewed artifact like the roster: it can
+	# turn a sign-in into an account with nobody clicking approve.
+	if [[ -n ${DARAK_PROVISION_CONFIG:-} ]]; then
+		[[ -r ${DARAK_PROVISION_CONFIG} ]] ||
+			die "cannot read $DARAK_PROVISION_CONFIG — put it inside DARAK_CONFIG, which is mounted at /etc/darak"
+		args+=(-provision-config "$DARAK_PROVISION_CONFIG")
+	fi
+
+	# The secret goes in as a FILE, never as an argument and never as an
+	# environment variable. argv is world-readable through /proc, and helpers
+	# are exec'd from the server and inherit its environment — so a secret kept
+	# in either is readable by the very users this server's permissions exist to
+	# separate. A deployment that only has it as a variable writes it out here,
+	# where the shell holds it and darak never sees the variable at all.
+	if [[ -n ${DARAK_OIDC_CLIENT_SECRET:-} ]]; then
+		# The umask is set in a SUBSHELL. Setting it here would apply to every
+		# file this script creates afterwards -- including the generated smb.conf,
+		# which several things below have to be able to read.
+		(
+			umask 077
+			printf '%s' "$DARAK_OIDC_CLIENT_SECRET" >"$STATE_DIR/oidc.secret"
+		)
+		unset DARAK_OIDC_CLIENT_SECRET
+		args+=(-oidc-client-secret-file "$STATE_DIR/oidc.secret")
+	elif [[ -n ${DARAK_OIDC_CLIENT_SECRET_FILE:-} ]]; then
+		[[ -r ${DARAK_OIDC_CLIENT_SECRET_FILE} ]] ||
+			die "cannot read $DARAK_OIDC_CLIENT_SECRET_FILE"
+		args+=(-oidc-client-secret-file "$DARAK_OIDC_CLIENT_SECRET_FILE")
+	fi
+fi
+
 # Order matters here, and it is not the obvious one.
 #
 # The layout roots come FIRST because usersync creates a home with MkdirAll,

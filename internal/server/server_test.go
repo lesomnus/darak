@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -702,4 +703,130 @@ func TestSharingDisabled(t *testing.T) {
 	if rec := h.do("GET", "/s/anything", nil, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("public endpoint = %d, want 404", rec.Code)
 	}
+}
+
+// The mode is the thing that decides who else can open a shared file, so the
+// route exists — but it decides nothing itself. The kernel does, exactly as it
+// does for a read.
+func TestChmod(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	alice := h.login("alice")
+
+	if rec := h.do("PUT", "/api/files/homes/alice/f.txt", strings.NewReader("x"), alice); rec.Code != http.StatusNoContent {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body)
+	}
+
+	rec := h.do("POST", "/api/mode/homes/alice/f.txt", strings.NewReader(`{"mode":"0640"}`), alice)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("chmod: %d %s", rec.Code, rec.Body)
+	}
+	st, err := os.Stat(filepath.Join(h.root, "homes/alice/f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Mode().Perm(); got != 0o640 {
+		t.Errorf("mode = %04o; want 0640", got)
+	}
+}
+
+// Octal as a string. A JSON number would arrive as 640 decimal, which is 1200
+// octal — a mode nobody asked for, with the setuid bit in it.
+func TestChmodRefusesANonOctalMode(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	alice := h.login("alice")
+	h.do("PUT", "/api/files/homes/alice/f.txt", strings.NewReader("x"), alice)
+
+	for _, body := range []string{`{"mode":"999"}`, `{"mode":"0100640"}`, `{"mode":""}`, `{"mode":"rwx"}`} {
+		if rec := h.do("POST", "/api/mode/homes/alice/f.txt", strings.NewReader(body), alice); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d; want 400", body, rec.Code)
+		}
+	}
+}
+
+// Dropping setgid from a team folder keeps everything already in it working and
+// quietly breaks everything created afterwards. Nothing fails at the time,
+// which is why this is refused rather than merely warned about.
+func TestChmodRefusesToDropSetgidOnATeamFolder(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	alice := h.login("alice")
+
+	if rec := h.do("POST", "/api/dirs/teams/design/sub", nil, alice); rec.Code != http.StatusNoContent {
+		t.Fatalf("mkdir: %d %s", rec.Code, rec.Body)
+	}
+	if rec := h.do("POST", "/api/mode/teams/design/sub", strings.NewReader(`{"mode":"0770"}`), alice); rec.Code != http.StatusConflict {
+		t.Errorf("dropping setgid = %d; want 409", rec.Code)
+	}
+	// With it kept, the same change goes through.
+	if rec := h.do("POST", "/api/mode/teams/design/sub", strings.NewReader(`{"mode":"2750"}`), alice); rec.Code != http.StatusNoContent {
+		t.Errorf("keeping setgid = %d; want 204", rec.Code)
+	}
+	// A file inside it is not a directory, so the rule does not apply.
+	h.do("PUT", "/api/files/teams/design/sub/f.txt", strings.NewReader("x"), alice)
+	if rec := h.do("POST", "/api/mode/teams/design/sub/f.txt", strings.NewReader(`{"mode":"0640"}`), alice); rec.Code != http.StatusNoContent {
+		t.Errorf("file chmod = %d; want 204", rec.Code)
+	}
+}
+
+// The mode dialog asks for a file's mode and whether it carries an ACL. Without
+// ACL tooling on the test host the honest answer is false, and the endpoint
+// still returns the mode — the dialog degrades to its generic warning rather
+// than failing.
+func TestModeInfo(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	alice := h.login("alice")
+	h.do("PUT", "/api/files/homes/alice/f.txt", strings.NewReader("x"), alice)
+	if err := os.Chmod(filepath.Join(h.root, "homes/alice/f.txt"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := h.do("GET", "/api/mode/homes/alice/f.txt", nil, alice)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Mode string `json:"mode"`
+		Dir  bool   `json:"dir"`
+		ACL  bool   `json:"acl"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != "0640" || got.Dir {
+		t.Errorf("got %+v; want mode 0640, dir false", got)
+	}
+	// A plain file with no ACL set must report acl:false — the base POSIX ACL
+	// (three entries) is just the mode bits and does not count.
+	if got.ACL {
+		t.Error("a file with no extended ACL reported acl:true")
+	}
+}
+
+// A directory has an ACL too if setfacl put one there; the base three-entry ACL
+// on an ordinary file/dir must not trip the warning. Runs only where setfacl is
+// available; elsewhere the false-path above covers the parsing threshold.
+func TestModeInfoDetectsAnExtendedACL(t *testing.T) {
+	if _, err := execLookPath("setfacl"); err != nil {
+		t.Skip("setfacl not installed")
+	}
+	h := newHarness(t, fakeAuth{ok: true})
+	alice := h.login("alice")
+	h.do("PUT", "/api/files/homes/alice/f.txt", strings.NewReader("x"), alice)
+	// Grant a named group read: this adds a fourth entry + mask, which is what
+	// HasACL keys on.
+	if err := setfaclCmd(filepath.Join(h.root, "homes/alice/f.txt"), "g:0:r"); err != nil {
+		t.Fatalf("setfacl: %v", err)
+	}
+	rec := h.do("GET", "/api/mode/homes/alice/f.txt", nil, alice)
+	var got struct {
+		ACL bool `json:"acl"`
+	}
+	json.NewDecoder(rec.Body).Decode(&got)
+	if !got.ACL {
+		t.Error("a file with a named-group ACL reported acl:false")
+	}
+}
+
+func execLookPath(name string) (string, error) { return exec.LookPath(name) }
+func setfaclCmd(path, spec string) error {
+	return exec.Command("setfacl", "-m", spec, path).Run()
 }

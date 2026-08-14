@@ -11,6 +11,7 @@ import { Login } from './components/Login'
 import { TopBar } from './components/TopBar'
 import { Browser } from './components/Browser'
 import { ShareDialog } from './components/ShareDialog'
+import { ChangePassword } from './components/ChangePassword'
 import { SharesDialog } from './components/SharesDialog'
 import { Admin } from './components/Admin'
 
@@ -31,6 +32,7 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [sharePath, setSharePath] = useState<string | null>(null)
   const [showShares, setShowShares] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
   // Whether to OFFER the page. The gate is on the server, on every route, so
   // this only decides whether a link is drawn -- a browser that lies to itself
   // reaches nothing it could not reach anyway.
@@ -126,6 +128,7 @@ export function App() {
         onMenuOpen={setMenuOpen}
         onNavigate={navigate}
         onShares={() => setShowShares(true)}
+        onPassword={() => setChangingPassword(true)}
         onSignOut={() => void signOut()}
       />
 
@@ -140,7 +143,7 @@ export function App() {
         // inside would each 404 -- which is the same answer a non-admin gets
         // for the API, so nothing is disclosed by trying.
         isAdmin || myTeams.length > 0 ? (
-          <Admin me={user} isAdmin={isAdmin} onError={report} />
+          <Admin me={user} isAdmin={isAdmin} sso={brand.sso} onError={report} />
         ) : (
           <Start
             user={user}
@@ -172,6 +175,9 @@ export function App() {
         <ShareDialog path={sharePath} onClose={() => setSharePath(null)} onError={report} />
       )}
       {showShares && <SharesDialog onClose={() => setShowShares(false)} />}
+      {changingPassword && (
+        <ChangePassword onClose={() => setChangingPassword(false)} onError={report} />
+      )}
     </>
   )
 }

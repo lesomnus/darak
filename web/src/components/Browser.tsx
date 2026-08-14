@@ -7,6 +7,7 @@ import { useWindowVirtual } from '../lib/useVirtual'
 import { useDeepSearch } from '../lib/useDeepSearch'
 import { DeepResults } from './DeepResults'
 import { FileRow, type Row } from './FileRow'
+import { ModeDialog } from './ModeDialog'
 import { Icon } from './Icon'
 
 interface UploadState {
@@ -37,6 +38,7 @@ export function Browser({
   const [loadError, setLoadError] = useState('')
   const [upload, setUpload] = useState<UploadState | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [chmodding, setChmodding] = useState<{ path: string; entry: Entry } | null>(null)
 
   // Sorted once per listing rather than once per render: at 50,000 entries a
   // Korean-collation sort is not something to redo because a drag started.
@@ -346,6 +348,7 @@ export function Browser({
                   onShare={() => onShare(child)}
                   onDelete={() => void remove(entry)}
                   onToggleFavourite={() => onToggleFavourite(child)}
+                  onChmod={() => setChmodding({ path: child, entry })}
                 />
               )
             })}
@@ -363,6 +366,16 @@ export function Browser({
           <DeepResults search={deep} path={path} query={query.trim()} onNavigate={onNavigate} />
         )}
       </main>
+
+      {chmodding && (
+        <ModeDialog
+          path={chmodding.path}
+          entry={chmodding.entry}
+          onClose={() => setChmodding(null)}
+          onDone={() => void reload()}
+          onError={onError}
+        />
+      )}
     </div>
   )
 }

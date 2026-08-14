@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/lesomnus/darak/internal/auth"
 )
 
 // The operations here change tdbsam and nothing else.
@@ -23,6 +25,15 @@ import (
 
 // ErrUnknownUser is returned for a name that is not a managed account.
 var ErrUnknownUser = errors.New("admin: not a managed account")
+
+// Managed reports whether the name is one of the accounts this server manages,
+// returning ErrUnknownUser when it is not.
+//
+// Exported for the identity mapping, which needs the same guarantee for the
+// same reason: without it, approving a queued sign-in would be a way to aim a
+// mapping at any name the system happens to know, including a service account
+// that has nothing to do with this deployment.
+func (a *Admin) Managed(ctx context.Context, user string) error { return a.managed(ctx, user) }
 
 // managed reports whether the name is one of the accounts this server manages.
 //
@@ -68,26 +79,17 @@ func (a *Admin) SetSMBEnabled(ctx context.Context, user string, enabled bool) er
 
 // SetSMBPassword sets a user's Samba password.
 //
-// The password goes in on stdin, never as an argument: an argv is readable by
-// anyone who can list processes, and run.Exec's error formatting deliberately
-// includes the command line but never stdin.
-//
-// smbpasswd -s reads the new password twice, which is why it is sent twice.
+// The talking to smbpasswd lives in internal/auth, which is where the
+// credential store is addressed from — an operator's reset and somebody
+// changing their own password must reach tdbsam the same way and be held to the
+// same rules, or the two would eventually accept different passwords.
 func (a *Admin) SetSMBPassword(ctx context.Context, user, password string) error {
 	if err := a.managed(ctx, user); err != nil {
 		return err
 	}
-	if password == "" {
-		return errors.New("admin: refusing to set an empty password")
-	}
-	if strings.ContainsAny(password, "\n\x00") {
-		// smbpasswd reads line-delimited input, so a newline would silently make
-		// the stored password a prefix of what was asked for.
-		return errors.New("admin: password must not contain a newline")
-	}
-	stdin := password + "\n" + password + "\n"
-	if _, err := a.cfg.Runner.Run(ctx, stdin, a.cfg.SmbpasswdBin, "-s", "-a", user); err != nil {
-		return fmt.Errorf("admin: set SMB password for %q: %w", user, err)
+	store := auth.PasswordStore{Runner: a.cfg.Runner, Path: a.cfg.SmbpasswdBin}
+	if err := store.Set(ctx, user, password); err != nil {
+		return fmt.Errorf("admin: %w", err)
 	}
 	return nil
 }

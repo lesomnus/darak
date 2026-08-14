@@ -38,13 +38,24 @@ func NewSessions(ttl time.Duration) *Sessions {
 	return &Sessions{ttl: ttl, m: map[string]session{}}
 }
 
-// Create issues a token for user.
-func (s *Sessions) Create(user string) (string, error) {
+// newToken returns an unguessable opaque identifier.
+//
+// 256 bits from crypto/rand, because every use of this is something a caller
+// would gain by guessing: a session, an in-flight sign-in, a one-off notice.
+func newToken() (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
-	token := base64.RawURLEncoding.EncodeToString(b[:])
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// Create issues a token for user.
+func (s *Sessions) Create(user string) (string, error) {
+	token, err := newToken()
+	if err != nil {
+		return "", err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,6 +83,28 @@ func (s *Sessions) Delete(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.m, token)
+}
+
+// DeleteOthers revokes every session belonging to user except one, and reports
+// how many were closed.
+//
+// Used when a password changes. The person changing it has just proved they
+// know the old one, so the sessions being closed are either their own on
+// another machine — which is what somebody who suspects their password was
+// learned actually wants — or somebody else's, which is the case this exists
+// for. Keeping the caller's own session avoids logging them out of the page
+// they are standing on.
+func (s *Sessions) DeleteOthers(user, keep string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for token, sess := range s.m {
+		if sess.user == user && token != keep {
+			delete(s.m, token)
+			n++
+		}
+	}
+	return n
 }
 
 // Sweep drops expired sessions. Lookup already refuses them; this is only so

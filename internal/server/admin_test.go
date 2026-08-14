@@ -40,7 +40,15 @@ func (m mapResolver) Resolve(ctx context.Context, user string) (helperpool.Creds
 // in the admin group; bob is not.
 func adminHarness(t *testing.T) (*harness, *scriptRunner) {
 	t.Helper()
-	base := newHarness(t, fakeAuth{ok: true})
+	return adminHarnessWith(t, fakeAuth{ok: true})
+}
+
+// adminHarnessWith is adminHarness with a chosen authenticator. Whether the
+// credential store accepts a password is what tells the initial-password route
+// if it is still the real one.
+func adminHarnessWith(t *testing.T, a auth.Authenticator) (*harness, *scriptRunner) {
+	t.Helper()
+	base := newHarness(t, a)
 
 	run := &scriptRunner{
 		out: map[string]string{
@@ -58,10 +66,12 @@ func adminHarness(t *testing.T) (*harness, *scriptRunner) {
 			"usersync member add carol team-b":    "",
 			"usersync member remove alice team-a": "",
 			"usersync apply":                      "",
+			"usersync passwd bob":                 "Hd-ABCDEFGHIJKLMNOP\n",
+			"usersync passwd alice":               "Hd-QRSTUVWXYZ234567\n",
 		},
 		err: map[string]error{},
 	}
-	a, err := admin.New(admin.Config{
+	adm, err := admin.New(admin.Config{
 		Root:   base.root,
 		Runner: run,
 		Resolver: mapResolver{
@@ -80,8 +90,8 @@ func adminHarness(t *testing.T) (*harness, *scriptRunner) {
 
 	s, err := New(Config{
 		FS:    &vfs.FS{Pool: base.doer},
-		Auth:  fakeAuth{ok: true},
-		Admin: a,
+		Auth:  a,
+		Admin: adm,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +107,7 @@ var adminRoutes = []struct{ method, path, body string }{
 	{"GET", "/api/admin/audit", ""},
 	{"POST", "/api/admin/users/bob/smb", `{"enabled":false}`},
 	{"POST", "/api/admin/users/bob/password", `{"password":"hunter2"}`},
+	{"GET", "/api/admin/users/bob/initial-password", ""},
 }
 
 // The gate is on every route, not just the page. A signed-in non-admin calling
@@ -351,4 +362,91 @@ func TestTeamWhoamiIsOpenToEveryone(t *testing.T) {
 			t.Errorf("teams for %s = %v, want %d", user, got.Teams, want)
 		}
 	}
+}
+
+// The initial password is the one thing on this page that hands over a way in
+// rather than changing one, so what it will and will not say is worth pinning.
+func TestInitialPassword(t *testing.T) {
+	h, run := adminHarness(t)
+	alice := h.login("alice")
+
+	rec := h.do("GET", "/api/admin/users/bob/initial-password", nil, alice)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		StillInitial bool   `json:"still_initial"`
+		Password     string `json:"password"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	// The authenticator accepts, so the derived value is still the real one.
+	if !got.StillInitial || got.Password != "Hd-ABCDEFGHIJKLMNOP" {
+		t.Errorf("got %+v", got)
+	}
+	// A credential must not be left in a proxy or the browser cache.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q; want no-store", cc)
+	}
+	if !containsCall(run.calls, "usersync passwd bob") {
+		t.Errorf("usersync was not asked: %v", run.calls)
+	}
+}
+
+// usersync prints the derived value forever, with no idea whether the person
+// has since changed theirs. Handing that over would occasionally tell somebody
+// their password is something it is not — which arrives as a broken login
+// rather than as a stale note.
+func TestInitialPasswordIsWithheldOnceChanged(t *testing.T) {
+	// Accepts the sign-in but rejects the derived value, which is exactly the
+	// state of somebody who has changed their password.
+	h, _ := adminHarnessWith(t, authFunc(func(_, password string) (bool, error) {
+		return !strings.HasPrefix(password, "Hd-"), nil
+	}))
+	alice := h.login("alice")
+
+	rec := h.do("GET", "/api/admin/users/bob/initial-password", nil, alice)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got["still_initial"] != false {
+		t.Errorf("still_initial = %v; want false", got["still_initial"])
+	}
+	if _, leaked := got["password"]; leaked {
+		t.Error("a password that no longer works was shown anyway")
+	}
+}
+
+// "Cannot ask" must not become "here it is". An unverifiable value is one that
+// may already be wrong.
+func TestInitialPasswordIsWithheldWhenUnverifiable(t *testing.T) {
+	h, _ := adminHarnessWith(t, authFunc(func(_, password string) (bool, error) {
+		if strings.HasPrefix(password, "Hd-") {
+			return false, auth.ErrUnavailable
+		}
+		return true, nil
+	}))
+	alice := h.login("alice")
+
+	rec := h.do("GET", "/api/admin/users/bob/initial-password", nil, alice)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d; want 503", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "Hd-") {
+		t.Error("the derived value leaked in the error")
+	}
+}
+
+func containsCall(calls []string, want string) bool {
+	for _, c := range calls {
+		if c == want {
+			return true
+		}
+	}
+	return false
 }

@@ -160,6 +160,65 @@ func (f *FS) Mkdir(ctx context.Context, user, p string, mode uint32) error {
 	return nil
 }
 
+// aclAccessXattr is the extended attribute Linux stores a POSIX access ACL in.
+// Its presence is what distinguishes a file that carries an ACL from one whose
+// permissions are only the mode bits.
+const aclAccessXattr = "system.posix_acl_access"
+
+// HasACL reports whether a file carries a POSIX access ACL beyond its mode bits.
+//
+// It exists for one honest reason: narrowing a file's group permissions with
+// chmod recomputes the ACL mask and can silently make a reader ACL entry
+// ineffective (measured on the deployment's own filesystem). The interface can
+// only warn about that concretely if it can tell an ACL is there, and the mode
+// bits do not say. A missing attribute is reported as false, not as an error —
+// most files have no ACL, and that is the ordinary answer.
+func (f *FS) HasACL(ctx context.Context, user, p string) (bool, error) {
+	resp, _, err := f.do(ctx, user, &wire.Request{Op: wire.OpGetXattr, Path: p, Name: aclAccessXattr})
+	if err != nil {
+		return false, err
+	}
+	switch resp.Errno {
+	case 0:
+		// A POSIX ACL with only the three base entries (owner/group/other) is
+		// just the mode bits in xattr form and is not what the warning is about;
+		// a longer one carries at least one named user or group. The kernel packs
+		// each entry as 8 bytes after a 4-byte version header, so four entries
+		// (the three base plus a mask, which appears once any named entry does)
+		// or more means there is something a chmod could hide.
+		return len(resp.Value) > 4+3*8, nil
+	case uint32(unix.ENODATA), uint32(unix.EOPNOTSUPP):
+		// No ACL, or a filesystem that cannot store one. Either way there is
+		// nothing for the warning to be about.
+		return false, nil
+	default:
+		return false, errnoOf("getxattr", p, resp.Errno)
+	}
+}
+
+// Chmod changes a file's permission bits.
+//
+// The kernel decides whether it is allowed, as everywhere else: chmod succeeds
+// only for the file's owner (or root, which the helper is not). So there is no
+// ownership check here — adding one would be a second, weaker opinion about a
+// question already answered, and it would be the app's opinion rather than the
+// filesystem's.
+//
+// It is recorded, unlike most metadata changes, because a mode is the thing
+// that decides who else can read a shared file. "Why can nobody open this any
+// more" is a question somebody will ask.
+func (f *FS) Chmod(ctx context.Context, user, p string, mode uint32) error {
+	resp, _, err := f.do(ctx, user, &wire.Request{Op: wire.OpChmod, Path: p, Mode: mode})
+	if err != nil {
+		return err
+	}
+	if err := errnoOf("chmod", p, resp.Errno); err != nil {
+		return err
+	}
+	f.note(user, "chmod", p, fmt.Sprintf("%04o", mode&0o7777))
+	return nil
+}
+
 // mkdir is Mkdir without the activity record, for the directories this package
 // creates on its own account.
 func (f *FS) mkdir(ctx context.Context, user, p string, mode uint32) error {

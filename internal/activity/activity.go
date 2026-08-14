@@ -52,6 +52,15 @@ const (
 	Deleted Action = "delete"
 	Renamed Action = "rename"
 	Mkdir   Action = "mkdir"
+	// Chmoded is the one that is not about content. It is here because a mode
+	// is what decides who else can open a shared file, so "why can nobody read
+	// this any more" is the same kind of question as "who deleted my file".
+	//
+	// Web only. smbd's full_audit is configured for create/mkdir/unlink/rename
+	// and a mode change over SMB is not captured — the operation names differ
+	// between Samba versions and getting one wrong takes the share offline, so
+	// that half is left alone rather than guessed at.
+	Chmoded Action = "chmod"
 )
 
 // Event is one recorded change.

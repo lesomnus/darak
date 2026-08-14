@@ -32,6 +32,7 @@ export function TopBar({
   onMenuOpen,
   onNavigate,
   onShares,
+  onPassword,
   onSignOut,
 }: {
   brand: Branding
@@ -49,6 +50,7 @@ export function TopBar({
   onMenuOpen: (open: boolean) => void
   onNavigate: (path: string) => void
   onShares: () => void
+  onPassword: () => void
   onSignOut: () => void
 }) {
   return (
@@ -69,6 +71,7 @@ export function TopBar({
           onOpenChange={onMenuOpen}
           onNavigate={onNavigate}
           onShares={onShares}
+          onPassword={onPassword}
           onSignOut={onSignOut}
         />
       </div>
