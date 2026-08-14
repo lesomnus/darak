@@ -3,6 +3,7 @@ package helperpool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -140,6 +141,24 @@ func statDot(t *testing.T, p *Pool, user string) {
 	}
 }
 
+// waitStopped waits briefly for the n-th spawned helper's Stop to have run.
+//
+// retire() stops a helper in a goroutine (`go e.helper.Stop()`), so that
+// retiring never blocks under the pool lock. The effect is therefore observable
+// slightly AFTER Reap/Close returns, and asserting it synchronously races that
+// goroutine — which is fine on an idle laptop and flakes on a loaded CI runner.
+// Polling for it is the honest wait.
+func waitStopped(t *testing.T, sp *fakeSpawner, n int, msg string) {
+	t.Helper()
+	for i := 0; i < 200; i++ { // ~1s
+		if sp.stopped(n) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Error(msg)
+}
+
 // A helper IS a user's credentials, so one per user is the model rather than a
 // cache size: two users cannot share one, and one user gains nothing from two.
 func TestOneHelperPerUser(t *testing.T) {
@@ -183,9 +202,7 @@ func TestGroupChangeReplacesTheHelper(t *testing.T) {
 	if got := sp.specs[1].Creds.Groups; len(got) != 3 {
 		t.Errorf("replacement started with groups %v, want the new set", got)
 	}
-	if !sp.stopped(0) {
-		t.Error("the stale helper must be stopped, not left running with the old groups")
-	}
+	waitStopped(t, sp, 0, "the stale helper must be stopped, not left running with the old groups")
 	if p.Len() != 1 {
 		t.Errorf("Len = %d, want 1", p.Len())
 	}
@@ -249,9 +266,7 @@ func TestReapsIdleHelpers(t *testing.T) {
 	if p.Len() != 0 {
 		t.Errorf("Len = %d, want 0 after the idle timeout", p.Len())
 	}
-	if !sp.stopped(0) {
-		t.Error("a reaped helper must actually be stopped")
-	}
+	waitStopped(t, sp, 0, "a reaped helper must actually be stopped")
 }
 
 // A reap must never cut off an operation that has already been permitted, for a
@@ -332,12 +347,10 @@ func TestCloseStopsEveryHelper(t *testing.T) {
 	if p.Len() != 0 {
 		t.Errorf("Len = %d, want 0", p.Len())
 	}
-	// Give the stops a moment; they are asynchronous so a busy helper can finish.
-	time.Sleep(20 * time.Millisecond)
+	// The stops are asynchronous (retire runs them in a goroutine), so poll for
+	// each rather than assuming a fixed delay is enough on a loaded runner.
 	for i := 0; i < sp.count(); i++ {
-		if !sp.stopped(i) {
-			t.Errorf("helper %d still running after Close", i)
-		}
+		waitStopped(t, sp, i, fmt.Sprintf("helper %d still running after Close", i))
 	}
 	if _, _, err := p.Do(context.Background(), "alice", &wire.Request{Op: wire.OpStat, Path: "."}); err == nil {
 		t.Error("a closed pool must refuse new work")
