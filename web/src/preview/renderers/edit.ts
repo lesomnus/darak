@@ -20,6 +20,8 @@ import htmlWorker from 'monaco-editor/language/html/html.worker.js?worker'
 import tsWorker from 'monaco-editor/language/typescript/ts.worker.js?worker'
 
 import { api } from '../../api'
+import { binaryNotice } from '../binary'
+import { decodeText } from '../bytes'
 import { language, type RenderCtx, type RendererModule } from '../registry'
 
 // Save reuses PUT /api/files, the write protocol: temp file, fsync, the old
@@ -67,7 +69,15 @@ function monacoLang(lang: string): string {
 const mod: RendererModule = {
   async mount(ctx: RenderCtx) {
     const bytes = await ctx.fetchBytes() // the whole file — you edit all of it
-    const original = await bytes.text()
+    const { text: original, binary } = await decodeText(bytes)
+
+    // Editing a binary as UTF-8 text and PUTting it back would corrupt the file.
+    // Refuse rather than let a save mangle it — the same reason VS Code will not
+    // open a binary in the text editor.
+    if (binary) {
+      binaryNotice(ctx.el, '편집할')
+      return () => ctx.el.replaceChildren()
+    }
 
     const host = document.createElement('div')
     host.className = 'preview-editor'

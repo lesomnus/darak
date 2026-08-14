@@ -63,6 +63,38 @@ export async function fetchBytes(path: string, maxBytes?: number): Promise<Bytes
   }
 }
 
+/**
+ * Reports whether a byte prefix looks like a binary file rather than text.
+ *
+ * A NUL byte is the signal git itself uses — real text never contains one — and
+ * it catches the common cases (compiled binaries, images with a text-ish
+ * extension, archives). A high proportion of other control characters is the
+ * backstop for encodings with no NUL. This is what keeps the text and code
+ * views from dumping garbage into a <pre>, and — more importantly — keeps the
+ * editor from opening a binary as UTF-8 and CORRUPTING it on save, the way VS
+ * Code refuses a binary with "the file is not displayed…".
+ */
+export function looksBinary(bytes: Uint8Array): boolean {
+  const n = Math.min(bytes.length, 8000)
+  if (n === 0) return false
+  let suspicious = 0
+  for (let i = 0; i < n; i++) {
+    const b = bytes[i]
+    if (b === 0) return true // a NUL byte — decisive
+    // Control chars other than tab, LF, CR, form-feed and ESC.
+    if (b !== undefined && (b < 0x08 || (b > 0x0e && b < 0x20 && b !== 0x1b))) suspicious++
+  }
+  return suspicious / n > 0.1
+}
+
+/** decodeText reads a blob's prefix and reports whether it was binary, so a
+ *  renderer can decide before showing anything. */
+export async function decodeText(bytes: Bytes): Promise<{ text: string; binary: boolean }> {
+  const buf = new Uint8Array(await bytes.arrayBuffer())
+  if (looksBinary(buf)) return { text: '', binary: true }
+  return { text: new TextDecoder().decode(buf), binary: false }
+}
+
 /** The theme a renderer (Shiki, Monaco) should draw in, resolved from the same
  *  three-state signal the rest of the app uses (data-theme, else the OS). */
 export function resolveTheme(): 'light' | 'dark' {

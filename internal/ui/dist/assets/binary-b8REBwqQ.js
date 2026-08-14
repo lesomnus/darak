@@ -1,0 +1,1 @@
+function e(e,t){let n=document.createElement(`p`);n.className=`muted preview-notice`,n.textContent=`바이너리 파일이라 ${t} 수 없습니다. 다운로드해서 여세요.`,e.appendChild(n)}export{e as t};

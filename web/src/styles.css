@@ -1734,3 +1734,7 @@ dialog menu {
 .preview-host > .muted.small {
   padding: 0.5rem 1rem 0;
 }
+.preview-notice {
+  padding: 1.5rem;
+  text-align: center;
+}

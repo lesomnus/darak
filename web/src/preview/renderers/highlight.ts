@@ -1,3 +1,5 @@
+import { binaryNotice } from '../binary'
+import { decodeText } from '../bytes'
 import type { RenderCtx, RendererModule } from '../registry'
 import { language } from '../registry'
 
@@ -12,12 +14,17 @@ import { language } from '../registry'
 const mod: RendererModule = {
   async mount(ctx: RenderCtx) {
     const bytes = await ctx.fetchBytes(512 * 1024)
-    const code = await bytes.text()
+    const { text: code, binary } = await decodeText(bytes)
     const lang = language(ctx.file.ext, ctx.file.name)
     const theme = ctx.theme === 'dark' ? 'github-dark' : 'github-light'
 
     const wrap = document.createElement('div')
     wrap.className = 'preview-code'
+    if (binary) {
+      binaryNotice(wrap, '표시할')
+      ctx.el.appendChild(wrap)
+      return () => wrap.remove()
+    }
     if (bytes.truncated) {
       const note = document.createElement('p')
       note.className = 'muted small'
