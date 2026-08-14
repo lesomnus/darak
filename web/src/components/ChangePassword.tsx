@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
 
 /** Kept in step with auth.MinPasswordLength, so the form refuses what the
@@ -24,6 +24,8 @@ export function ChangePassword({
   onClose: () => void
   onError: (message: string) => void
 }) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => ref.current?.showModal(), [])
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [again, setAgain] = useState('')
@@ -48,8 +50,8 @@ export function ChangePassword({
   }
 
   return (
-    <div className="backdrop" onClick={onClose}>
-      <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={(e) => void submit(e)}>
+    <dialog ref={ref} onClose={onClose} onCancel={onClose}>
+      <form onSubmit={(e) => void submit(e)}>
         <h3>비밀번호 변경</h3>
 
         {closed !== null ? (
@@ -124,6 +126,6 @@ export function ChangePassword({
           </>
         )}
       </form>
-    </div>
+    </dialog>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
 import type { Entry } from '../types'
 
@@ -31,6 +31,8 @@ export function ModeDialog({
   const inTeam = path.startsWith('teams/')
   const [mode, setMode] = useState(entry.mode ?? (entry.dir ? '0700' : '0600'))
   const [busy, setBusy] = useState(false)
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => ref.current?.showModal(), [])
   // Whether this file carries a POSIX ACL. Fetched, because it is not in the
   // mode bits the listing already has — and it is the one thing about changing a
   // mode that can go wrong invisibly.
@@ -87,8 +89,8 @@ export function ModeDialog({
   }
 
   return (
-    <div className="backdrop" onClick={onClose}>
-      <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={(e) => void submit(e)}>
+    <dialog ref={ref} onClose={onClose} onCancel={onClose}>
+      <form onSubmit={(e) => void submit(e)}>
         <h3>권한 변경</h3>
         <p className="muted small">
           {entry.name} · 현재 <code>{entry.mode ?? '—'}</code>
@@ -149,6 +151,6 @@ export function ModeDialog({
           </button>
         </div>
       </form>
-    </div>
+    </dialog>
   )
 }

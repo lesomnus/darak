@@ -8,6 +8,8 @@ import { useDeepSearch } from '../lib/useDeepSearch'
 import { DeepResults } from './DeepResults'
 import { FileRow, type Row } from './FileRow'
 import { ModeDialog } from './ModeDialog'
+import { PreviewModal } from './PreviewModal'
+import { previewable, toPreviewFile } from '../preview/registry'
 import { Icon } from './Icon'
 
 interface UploadState {
@@ -39,6 +41,7 @@ export function Browser({
   const [upload, setUpload] = useState<UploadState | null>(null)
   const [dragging, setDragging] = useState(false)
   const [chmodding, setChmodding] = useState<{ path: string; entry: Entry } | null>(null)
+  const [previewing, setPreviewing] = useState<{ path: string; entry: Entry } | null>(null)
 
   // Sorted once per listing rather than once per render: at 50,000 entries a
   // Korean-collation sort is not something to redo because a drag started.
@@ -341,8 +344,10 @@ export function Browser({
                   favourite={isFavourite(child)}
                   onOpen={() => {
                     if (entry.dir) onNavigate(child)
-                    // A download, not a fetch: the browser streams it, and Range
-                    // and resume come from the server for free.
+                    // Previewable in place; otherwise a download, where the
+                    // browser streams it and Range/resume come from the server.
+                    else if (previewable(toPreviewFile(child, entry)))
+                      setPreviewing({ path: child, entry })
                     else window.location.href = filesUrl(child)
                   }}
                   onShare={() => onShare(child)}
@@ -367,6 +372,14 @@ export function Browser({
         )}
       </main>
 
+      {previewing && (
+        <PreviewModal
+          path={previewing.path}
+          entry={previewing.entry}
+          onClose={() => setPreviewing(null)}
+          onError={onError}
+        />
+      )}
       {chmodding && (
         <ModeDialog
           path={chmodding.path}

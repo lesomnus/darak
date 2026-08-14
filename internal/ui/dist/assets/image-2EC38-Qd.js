@@ -1,0 +1,1 @@
+var e={async mount(e){let t=await e.fetchBytes(),n=URL.createObjectURL(t.blob),r=document.createElement(`img`);return r.className=`preview-image`,r.alt=e.file.name,r.src=n,r.onerror=()=>e.onError(`이미지를 표시할 수 없습니다.`),e.el.appendChild(r),()=>{r.remove(),URL.revokeObjectURL(n)}}};export{e as default};

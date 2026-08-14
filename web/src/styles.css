@@ -1621,3 +1621,116 @@ dialog menu {
   color: var(--fg);
   box-shadow: var(--shadow-sm);
 }
+
+/* --- file preview ------------------------------------------------------- */
+/* Wider and taller than the form dialogs: this shows content, not a form. */
+.preview-dialog {
+  width: min(64rem, calc(100vw - 2rem));
+  height: min(80vh, calc(100vh - 3rem));
+  max-width: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.preview-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 4rem;
+}
+/* The view switcher: a segmented group of the file's available renderers. */
+.preview-views {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.preview-views button {
+  min-height: 2rem;
+  padding: 0.3rem 0.6rem;
+  font-size: var(--t-sm);
+}
+.preview-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.preview-actions .button,
+.preview-actions button:not(.icon) {
+  min-height: 2rem;
+  padding: 0.3rem 0.7rem;
+  font-size: var(--t-sm);
+  text-decoration: none;
+}
+/* The body scrolls; the editor and iframe fill it. */
+.preview-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.preview-host,
+.preview-host > * {
+  min-height: 100%;
+}
+.preview-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.preview-text,
+.preview-code {
+  padding: 0.75rem 1rem;
+}
+.preview-text pre,
+.preview-code pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-sm);
+}
+/* Shiki emits its own <pre class="shiki"> with an inline background; let it. */
+.preview-code .shiki {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--r-md);
+  overflow-x: auto;
+  font-size: var(--t-sm);
+}
+.preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  /* A checker so transparent PNGs read as transparent, not as the page bg. */
+  background:
+    conic-gradient(from 90deg at 1px 1px, #0000 90deg, rgb(128 128 128 / 12%) 0) 0 0 / 16px 16px;
+}
+/* Monaco and the sandboxed iframe both want to fill the body. */
+.preview-editor,
+.preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.preview-frame {
+  background: #fff;
+}
+.preview-body > .muted.small,
+.preview-host > .muted.small {
+  padding: 0.5rem 1rem 0;
+}
