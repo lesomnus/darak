@@ -296,11 +296,20 @@ func (x *Enrollment) GetUpdatedAt() *timestamppb.Timestamp {
 }
 
 type AddEnrollmentRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Issuer        string                 `protobuf:"bytes,1,opt,name=issuer,proto3" json:"issuer,omitempty"`
-	Subject       string                 `protobuf:"bytes,2,opt,name=subject,proto3" json:"subject,omitempty"`
-	Emails        []string               `protobuf:"bytes,3,rep,name=emails,proto3" json:"emails,omitempty"`
-	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The account name to create. darak derives it from the primary address's
+	// local part (`dohyun.jang@company.com` → `dohyun.jang`) — the same rule
+	// trust-email matches an EXISTING member by, so the account this creates signs
+	// in cleanly the next time. It is passed, not re-derived here: darak owns the
+	// rule for what an address names, and the server is told the answer.
+	Username string `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	// Who the provider said this is, recorded so the account binds to this subject
+	// when it appears.
+	Issuer  string   `protobuf:"bytes,2,opt,name=issuer,proto3" json:"issuer,omitempty"`
+	Subject string   `protobuf:"bytes,3,opt,name=subject,proto3" json:"subject,omitempty"`
+	Emails  []string `protobuf:"bytes,4,rep,name=emails,proto3" json:"emails,omitempty"`
+	// Display name from the provider, for a person reviewing the request.
+	Name          string `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -333,6 +342,13 @@ func (x *AddEnrollmentRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AddEnrollmentRequest.ProtoReflect.Descriptor instead.
 func (*AddEnrollmentRequest) Descriptor() ([]byte, []int) {
 	return file_darak_control_v1_control_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AddEnrollmentRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
 }
 
 func (x *AddEnrollmentRequest) GetIssuer() string {
@@ -794,6 +810,66 @@ func (x *EraseMembershipRequest) GetGroup() string {
 	return ""
 }
 
+type SetMembershipRoleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Account       string                 `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
+	Group         string                 `protobuf:"bytes,2,opt,name=group,proto3" json:"group,omitempty"`
+	Role          Role                   `protobuf:"varint,3,opt,name=role,proto3,enum=darak.control.v1.Role" json:"role,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetMembershipRoleRequest) Reset() {
+	*x = SetMembershipRoleRequest{}
+	mi := &file_darak_control_v1_control_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetMembershipRoleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetMembershipRoleRequest) ProtoMessage() {}
+
+func (x *SetMembershipRoleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_darak_control_v1_control_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetMembershipRoleRequest.ProtoReflect.Descriptor instead.
+func (*SetMembershipRoleRequest) Descriptor() ([]byte, []int) {
+	return file_darak_control_v1_control_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SetMembershipRoleRequest) GetAccount() string {
+	if x != nil {
+		return x.Account
+	}
+	return ""
+}
+
+func (x *SetMembershipRoleRequest) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *SetMembershipRoleRequest) GetRole() Role {
+	if x != nil {
+		return x.Role
+	}
+	return Role_ROLE_UNSPECIFIED
+}
+
 type ListMembershipsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Group         string                 `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
@@ -803,7 +879,7 @@ type ListMembershipsRequest struct {
 
 func (x *ListMembershipsRequest) Reset() {
 	*x = ListMembershipsRequest{}
-	mi := &file_darak_control_v1_control_proto_msgTypes[10]
+	mi := &file_darak_control_v1_control_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -815,7 +891,7 @@ func (x *ListMembershipsRequest) String() string {
 func (*ListMembershipsRequest) ProtoMessage() {}
 
 func (x *ListMembershipsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_darak_control_v1_control_proto_msgTypes[10]
+	mi := &file_darak_control_v1_control_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -828,7 +904,7 @@ func (x *ListMembershipsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMembershipsRequest.ProtoReflect.Descriptor instead.
 func (*ListMembershipsRequest) Descriptor() ([]byte, []int) {
-	return file_darak_control_v1_control_proto_rawDescGZIP(), []int{10}
+	return file_darak_control_v1_control_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListMembershipsRequest) GetGroup() string {
@@ -847,7 +923,7 @@ type ListMembershipsResponse struct {
 
 func (x *ListMembershipsResponse) Reset() {
 	*x = ListMembershipsResponse{}
-	mi := &file_darak_control_v1_control_proto_msgTypes[11]
+	mi := &file_darak_control_v1_control_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -859,7 +935,7 @@ func (x *ListMembershipsResponse) String() string {
 func (*ListMembershipsResponse) ProtoMessage() {}
 
 func (x *ListMembershipsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_darak_control_v1_control_proto_msgTypes[11]
+	mi := &file_darak_control_v1_control_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -872,7 +948,7 @@ func (x *ListMembershipsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMembershipsResponse.ProtoReflect.Descriptor instead.
 func (*ListMembershipsResponse) Descriptor() ([]byte, []int) {
-	return file_darak_control_v1_control_proto_rawDescGZIP(), []int{11}
+	return file_darak_control_v1_control_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListMembershipsResponse) GetMemberships() []*Membership {
@@ -898,12 +974,13 @@ const file_darak_control_v1_control_proto_rawDesc = "" +
 	"\aaccount\x18\a \x01(\tR\aaccount\x12\x18\n" +
 	"\amessage\x18\b \x01(\tR\amessage\x129\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"t\n" +
-	"\x14AddEnrollmentRequest\x12\x16\n" +
-	"\x06issuer\x18\x01 \x01(\tR\x06issuer\x12\x18\n" +
-	"\asubject\x18\x02 \x01(\tR\asubject\x12\x16\n" +
-	"\x06emails\x18\x03 \x03(\tR\x06emails\x12\x12\n" +
-	"\x04name\x18\x04 \x01(\tR\x04name\"&\n" +
+	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x90\x01\n" +
+	"\x14AddEnrollmentRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x16\n" +
+	"\x06issuer\x18\x02 \x01(\tR\x06issuer\x12\x18\n" +
+	"\asubject\x18\x03 \x01(\tR\asubject\x12\x16\n" +
+	"\x06emails\x18\x04 \x03(\tR\x06emails\x12\x12\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\"&\n" +
 	"\x14GetEnrollmentRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"o\n" +
 	"\x16ListEnrollmentsRequest\x12-\n" +
@@ -929,7 +1006,11 @@ const file_darak_control_v1_control_proto_rawDesc = "" +
 	"\x04role\x18\x03 \x01(\x0e2\x16.darak.control.v1.RoleR\x04role\"H\n" +
 	"\x16EraseMembershipRequest\x12\x18\n" +
 	"\aaccount\x18\x01 \x01(\tR\aaccount\x12\x14\n" +
-	"\x05group\x18\x02 \x01(\tR\x05group\".\n" +
+	"\x05group\x18\x02 \x01(\tR\x05group\"v\n" +
+	"\x18SetMembershipRoleRequest\x12\x18\n" +
+	"\aaccount\x18\x01 \x01(\tR\aaccount\x12\x14\n" +
+	"\x05group\x18\x02 \x01(\tR\x05group\x12*\n" +
+	"\x04role\x18\x03 \x01(\x0e2\x16.darak.control.v1.RoleR\x04role\".\n" +
 	"\x16ListMembershipsRequest\x12\x14\n" +
 	"\x05group\x18\x01 \x01(\tR\x05group\"Y\n" +
 	"\x17ListMembershipsResponse\x12>\n" +
@@ -953,11 +1034,12 @@ const file_darak_control_v1_control_proto_rawDesc = "" +
 	"\x03Get\x12&.darak.control.v1.GetEnrollmentRequest\x1a\x1c.darak.control.v1.Enrollment\x12[\n" +
 	"\x04List\x12(.darak.control.v1.ListEnrollmentsRequest\x1a).darak.control.v1.ListEnrollmentsResponse\x12R\n" +
 	"\x05Watch\x12).darak.control.v1.WatchEnrollmentsRequest\x1a\x1c.darak.control.v1.Enrollment0\x01\x12I\n" +
-	"\x05Erase\x12(.darak.control.v1.EraseEnrollmentRequest\x1a\x16.google.protobuf.Empty2\x88\x02\n" +
+	"\x05Erase\x12(.darak.control.v1.EraseEnrollmentRequest\x1a\x16.google.protobuf.Empty2\xdd\x02\n" +
 	"\x11MembershipService\x12K\n" +
 	"\x03Add\x12&.darak.control.v1.AddMembershipRequest\x1a\x1c.darak.control.v1.Membership\x12I\n" +
 	"\x05Erase\x12(.darak.control.v1.EraseMembershipRequest\x1a\x16.google.protobuf.Empty\x12[\n" +
-	"\x04List\x12(.darak.control.v1.ListMembershipsRequest\x1a).darak.control.v1.ListMembershipsResponseB@Z>github.com/lesomnus/darak/internal/control/controlpb;controlpbb\x06proto3"
+	"\x04List\x12(.darak.control.v1.ListMembershipsRequest\x1a).darak.control.v1.ListMembershipsResponse\x12S\n" +
+	"\aSetRole\x12*.darak.control.v1.SetMembershipRoleRequest\x1a\x1c.darak.control.v1.MembershipB@Z>github.com/lesomnus/darak/internal/control/controlpb;controlpbb\x06proto3"
 
 var (
 	file_darak_control_v1_control_proto_rawDescOnce sync.Once
@@ -972,55 +1054,59 @@ func file_darak_control_v1_control_proto_rawDescGZIP() []byte {
 }
 
 var file_darak_control_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_darak_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_darak_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_darak_control_v1_control_proto_goTypes = []any{
-	(Stage)(0),                      // 0: darak.control.v1.Stage
-	(Role)(0),                       // 1: darak.control.v1.Role
-	(*Enrollment)(nil),              // 2: darak.control.v1.Enrollment
-	(*AddEnrollmentRequest)(nil),    // 3: darak.control.v1.AddEnrollmentRequest
-	(*GetEnrollmentRequest)(nil),    // 4: darak.control.v1.GetEnrollmentRequest
-	(*ListEnrollmentsRequest)(nil),  // 5: darak.control.v1.ListEnrollmentsRequest
-	(*ListEnrollmentsResponse)(nil), // 6: darak.control.v1.ListEnrollmentsResponse
-	(*EraseEnrollmentRequest)(nil),  // 7: darak.control.v1.EraseEnrollmentRequest
-	(*WatchEnrollmentsRequest)(nil), // 8: darak.control.v1.WatchEnrollmentsRequest
-	(*Membership)(nil),              // 9: darak.control.v1.Membership
-	(*AddMembershipRequest)(nil),    // 10: darak.control.v1.AddMembershipRequest
-	(*EraseMembershipRequest)(nil),  // 11: darak.control.v1.EraseMembershipRequest
-	(*ListMembershipsRequest)(nil),  // 12: darak.control.v1.ListMembershipsRequest
-	(*ListMembershipsResponse)(nil), // 13: darak.control.v1.ListMembershipsResponse
-	(*timestamppb.Timestamp)(nil),   // 14: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),           // 15: google.protobuf.Empty
+	(Stage)(0),                       // 0: darak.control.v1.Stage
+	(Role)(0),                        // 1: darak.control.v1.Role
+	(*Enrollment)(nil),               // 2: darak.control.v1.Enrollment
+	(*AddEnrollmentRequest)(nil),     // 3: darak.control.v1.AddEnrollmentRequest
+	(*GetEnrollmentRequest)(nil),     // 4: darak.control.v1.GetEnrollmentRequest
+	(*ListEnrollmentsRequest)(nil),   // 5: darak.control.v1.ListEnrollmentsRequest
+	(*ListEnrollmentsResponse)(nil),  // 6: darak.control.v1.ListEnrollmentsResponse
+	(*EraseEnrollmentRequest)(nil),   // 7: darak.control.v1.EraseEnrollmentRequest
+	(*WatchEnrollmentsRequest)(nil),  // 8: darak.control.v1.WatchEnrollmentsRequest
+	(*Membership)(nil),               // 9: darak.control.v1.Membership
+	(*AddMembershipRequest)(nil),     // 10: darak.control.v1.AddMembershipRequest
+	(*EraseMembershipRequest)(nil),   // 11: darak.control.v1.EraseMembershipRequest
+	(*SetMembershipRoleRequest)(nil), // 12: darak.control.v1.SetMembershipRoleRequest
+	(*ListMembershipsRequest)(nil),   // 13: darak.control.v1.ListMembershipsRequest
+	(*ListMembershipsResponse)(nil),  // 14: darak.control.v1.ListMembershipsResponse
+	(*timestamppb.Timestamp)(nil),    // 15: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),            // 16: google.protobuf.Empty
 }
 var file_darak_control_v1_control_proto_depIdxs = []int32{
 	0,  // 0: darak.control.v1.Enrollment.stage:type_name -> darak.control.v1.Stage
-	14, // 1: darak.control.v1.Enrollment.updated_at:type_name -> google.protobuf.Timestamp
+	15, // 1: darak.control.v1.Enrollment.updated_at:type_name -> google.protobuf.Timestamp
 	0,  // 2: darak.control.v1.ListEnrollmentsRequest.stage:type_name -> darak.control.v1.Stage
 	2,  // 3: darak.control.v1.ListEnrollmentsResponse.enrollments:type_name -> darak.control.v1.Enrollment
 	0,  // 4: darak.control.v1.WatchEnrollmentsRequest.stage:type_name -> darak.control.v1.Stage
 	1,  // 5: darak.control.v1.Membership.role:type_name -> darak.control.v1.Role
 	1,  // 6: darak.control.v1.AddMembershipRequest.role:type_name -> darak.control.v1.Role
-	9,  // 7: darak.control.v1.ListMembershipsResponse.memberships:type_name -> darak.control.v1.Membership
-	3,  // 8: darak.control.v1.EnrollmentService.Add:input_type -> darak.control.v1.AddEnrollmentRequest
-	4,  // 9: darak.control.v1.EnrollmentService.Get:input_type -> darak.control.v1.GetEnrollmentRequest
-	5,  // 10: darak.control.v1.EnrollmentService.List:input_type -> darak.control.v1.ListEnrollmentsRequest
-	8,  // 11: darak.control.v1.EnrollmentService.Watch:input_type -> darak.control.v1.WatchEnrollmentsRequest
-	7,  // 12: darak.control.v1.EnrollmentService.Erase:input_type -> darak.control.v1.EraseEnrollmentRequest
-	10, // 13: darak.control.v1.MembershipService.Add:input_type -> darak.control.v1.AddMembershipRequest
-	11, // 14: darak.control.v1.MembershipService.Erase:input_type -> darak.control.v1.EraseMembershipRequest
-	12, // 15: darak.control.v1.MembershipService.List:input_type -> darak.control.v1.ListMembershipsRequest
-	2,  // 16: darak.control.v1.EnrollmentService.Add:output_type -> darak.control.v1.Enrollment
-	2,  // 17: darak.control.v1.EnrollmentService.Get:output_type -> darak.control.v1.Enrollment
-	6,  // 18: darak.control.v1.EnrollmentService.List:output_type -> darak.control.v1.ListEnrollmentsResponse
-	2,  // 19: darak.control.v1.EnrollmentService.Watch:output_type -> darak.control.v1.Enrollment
-	15, // 20: darak.control.v1.EnrollmentService.Erase:output_type -> google.protobuf.Empty
-	9,  // 21: darak.control.v1.MembershipService.Add:output_type -> darak.control.v1.Membership
-	15, // 22: darak.control.v1.MembershipService.Erase:output_type -> google.protobuf.Empty
-	13, // 23: darak.control.v1.MembershipService.List:output_type -> darak.control.v1.ListMembershipsResponse
-	16, // [16:24] is the sub-list for method output_type
-	8,  // [8:16] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	1,  // 7: darak.control.v1.SetMembershipRoleRequest.role:type_name -> darak.control.v1.Role
+	9,  // 8: darak.control.v1.ListMembershipsResponse.memberships:type_name -> darak.control.v1.Membership
+	3,  // 9: darak.control.v1.EnrollmentService.Add:input_type -> darak.control.v1.AddEnrollmentRequest
+	4,  // 10: darak.control.v1.EnrollmentService.Get:input_type -> darak.control.v1.GetEnrollmentRequest
+	5,  // 11: darak.control.v1.EnrollmentService.List:input_type -> darak.control.v1.ListEnrollmentsRequest
+	8,  // 12: darak.control.v1.EnrollmentService.Watch:input_type -> darak.control.v1.WatchEnrollmentsRequest
+	7,  // 13: darak.control.v1.EnrollmentService.Erase:input_type -> darak.control.v1.EraseEnrollmentRequest
+	10, // 14: darak.control.v1.MembershipService.Add:input_type -> darak.control.v1.AddMembershipRequest
+	11, // 15: darak.control.v1.MembershipService.Erase:input_type -> darak.control.v1.EraseMembershipRequest
+	13, // 16: darak.control.v1.MembershipService.List:input_type -> darak.control.v1.ListMembershipsRequest
+	12, // 17: darak.control.v1.MembershipService.SetRole:input_type -> darak.control.v1.SetMembershipRoleRequest
+	2,  // 18: darak.control.v1.EnrollmentService.Add:output_type -> darak.control.v1.Enrollment
+	2,  // 19: darak.control.v1.EnrollmentService.Get:output_type -> darak.control.v1.Enrollment
+	6,  // 20: darak.control.v1.EnrollmentService.List:output_type -> darak.control.v1.ListEnrollmentsResponse
+	2,  // 21: darak.control.v1.EnrollmentService.Watch:output_type -> darak.control.v1.Enrollment
+	16, // 22: darak.control.v1.EnrollmentService.Erase:output_type -> google.protobuf.Empty
+	9,  // 23: darak.control.v1.MembershipService.Add:output_type -> darak.control.v1.Membership
+	16, // 24: darak.control.v1.MembershipService.Erase:output_type -> google.protobuf.Empty
+	14, // 25: darak.control.v1.MembershipService.List:output_type -> darak.control.v1.ListMembershipsResponse
+	9,  // 26: darak.control.v1.MembershipService.SetRole:output_type -> darak.control.v1.Membership
+	18, // [18:27] is the sub-list for method output_type
+	9,  // [9:18] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_darak_control_v1_control_proto_init() }
@@ -1034,7 +1120,7 @@ func file_darak_control_v1_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_darak_control_v1_control_proto_rawDesc), len(file_darak_control_v1_control_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

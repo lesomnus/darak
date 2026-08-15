@@ -323,9 +323,10 @@ var EnrollmentService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	MembershipService_Add_FullMethodName   = "/darak.control.v1.MembershipService/Add"
-	MembershipService_Erase_FullMethodName = "/darak.control.v1.MembershipService/Erase"
-	MembershipService_List_FullMethodName  = "/darak.control.v1.MembershipService/List"
+	MembershipService_Add_FullMethodName     = "/darak.control.v1.MembershipService/Add"
+	MembershipService_Erase_FullMethodName   = "/darak.control.v1.MembershipService/Erase"
+	MembershipService_List_FullMethodName    = "/darak.control.v1.MembershipService/List"
+	MembershipService_SetRole_FullMethodName = "/darak.control.v1.MembershipService/SetRole"
 )
 
 // MembershipServiceClient is the client API for MembershipService service.
@@ -339,6 +340,13 @@ type MembershipServiceClient interface {
 	Add(ctx context.Context, in *AddMembershipRequest, opts ...grpc.CallOption) (*Membership, error)
 	Erase(ctx context.Context, in *EraseMembershipRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	List(ctx context.Context, in *ListMembershipsRequest, opts ...grpc.CallOption) (*ListMembershipsResponse, error)
+	// SetRole re-grades an existing membership — read-only to writing, member to
+	// owner. It is a behavior, not a generic field Patch: it means "change what
+	// this person's place in the group is worth", a decision an operator makes,
+	// where a raw Patch is a primitive that says nothing about intent and would
+	// let any field be set. There is no Patch or Apply on this API for that
+	// reason — every mutation that means something is its own method.
+	SetRole(ctx context.Context, in *SetMembershipRoleRequest, opts ...grpc.CallOption) (*Membership, error)
 }
 
 type membershipServiceClient struct {
@@ -379,6 +387,16 @@ func (c *membershipServiceClient) List(ctx context.Context, in *ListMembershipsR
 	return out, nil
 }
 
+func (c *membershipServiceClient) SetRole(ctx context.Context, in *SetMembershipRoleRequest, opts ...grpc.CallOption) (*Membership, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Membership)
+	err := c.cc.Invoke(ctx, MembershipService_SetRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MembershipServiceServer is the server API for MembershipService service.
 // All implementations must embed UnimplementedMembershipServiceServer
 // for forward compatibility.
@@ -390,6 +408,13 @@ type MembershipServiceServer interface {
 	Add(context.Context, *AddMembershipRequest) (*Membership, error)
 	Erase(context.Context, *EraseMembershipRequest) (*emptypb.Empty, error)
 	List(context.Context, *ListMembershipsRequest) (*ListMembershipsResponse, error)
+	// SetRole re-grades an existing membership — read-only to writing, member to
+	// owner. It is a behavior, not a generic field Patch: it means "change what
+	// this person's place in the group is worth", a decision an operator makes,
+	// where a raw Patch is a primitive that says nothing about intent and would
+	// let any field be set. There is no Patch or Apply on this API for that
+	// reason — every mutation that means something is its own method.
+	SetRole(context.Context, *SetMembershipRoleRequest) (*Membership, error)
 	mustEmbedUnimplementedMembershipServiceServer()
 }
 
@@ -408,6 +433,9 @@ func (UnimplementedMembershipServiceServer) Erase(context.Context, *EraseMembers
 }
 func (UnimplementedMembershipServiceServer) List(context.Context, *ListMembershipsRequest) (*ListMembershipsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedMembershipServiceServer) SetRole(context.Context, *SetMembershipRoleRequest) (*Membership, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetRole not implemented")
 }
 func (UnimplementedMembershipServiceServer) mustEmbedUnimplementedMembershipServiceServer() {}
 func (UnimplementedMembershipServiceServer) testEmbeddedByValue()                           {}
@@ -484,6 +512,24 @@ func _MembershipService_List_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MembershipService_SetRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetMembershipRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MembershipServiceServer).SetRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MembershipService_SetRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MembershipServiceServer).SetRole(ctx, req.(*SetMembershipRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MembershipService_ServiceDesc is the grpc.ServiceDesc for MembershipService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -502,6 +548,10 @@ var MembershipService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "List",
 			Handler:    _MembershipService_List_Handler,
+		},
+		{
+			MethodName: "SetRole",
+			Handler:    _MembershipService_SetRole_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

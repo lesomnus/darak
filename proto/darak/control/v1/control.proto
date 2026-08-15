@@ -83,10 +83,21 @@ enum Stage {
 }
 
 message AddEnrollmentRequest {
-  string issuer = 1;
-  string subject = 2;
-  repeated string emails = 3;
-  string name = 4;
+  // The account name to create. darak derives it from the primary address's
+  // local part (`dohyun.jang@company.com` → `dohyun.jang`) — the same rule
+  // trust-email matches an EXISTING member by, so the account this creates signs
+  // in cleanly the next time. It is passed, not re-derived here: darak owns the
+  // rule for what an address names, and the server is told the answer.
+  string username = 1;
+
+  // Who the provider said this is, recorded so the account binds to this subject
+  // when it appears.
+  string issuer = 2;
+  string subject = 3;
+  repeated string emails = 4;
+
+  // Display name from the provider, for a person reviewing the request.
+  string name = 5;
 }
 
 message GetEnrollmentRequest {
@@ -165,6 +176,12 @@ message EraseMembershipRequest {
   string group = 2;
 }
 
+message SetMembershipRoleRequest {
+  string account = 1;
+  string group = 2;
+  Role role = 3;
+}
+
 message ListMembershipsRequest {
   string group = 1;
 }
@@ -180,4 +197,11 @@ service MembershipService {
   rpc Add(AddMembershipRequest) returns (Membership);
   rpc Erase(EraseMembershipRequest) returns (google.protobuf.Empty);
   rpc List(ListMembershipsRequest) returns (ListMembershipsResponse);
+  // SetRole re-grades an existing membership — read-only to writing, member to
+  // owner. It is a behavior, not a generic field Patch: it means "change what
+  // this person's place in the group is worth", a decision an operator makes,
+  // where a raw Patch is a primitive that says nothing about intent and would
+  // let any field be set. There is no Patch or Apply on this API for that
+  // reason — every mutation that means something is its own method.
+  rpc SetRole(SetMembershipRoleRequest) returns (Membership);
 }
