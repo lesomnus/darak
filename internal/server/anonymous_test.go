@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +72,29 @@ func TestWhoamiReportsAnonymous(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &me)
 	if me.User != "alice" || me.Anonymous {
 		t.Fatalf("signed-in whoami = %+v, want alice with anonymous=false", me)
+	}
+}
+
+// An anonymous visitor cannot enumerate the top of the tree: listing `teams` or
+// `homes` never reaches the real directory (here the nil FS would panic if it
+// did), so no team or account name leaks. `teams` comes from the public set —
+// empty without an Admin — and `homes` is always empty.
+func TestAnonRootEnumerationIsBlocked(t *testing.T) {
+	s := &Server{cfg: Config{AnonymousUser: "nobody-darak"}, sessions: NewSessions(time.Hour)}
+	for _, root := range []string{"homes", "teams"} {
+		r := httptest.NewRequest("GET", "/api/files/"+root, nil).
+			WithContext(contextWithUser(context.Background(), "nobody-darak"))
+		w := httptest.NewRecorder()
+		s.listDir(w, r, "nobody-darak", root)
+		var body struct {
+			Entries []Entry `json:"entries"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: %v", root, err)
+		}
+		if len(body.Entries) != 0 {
+			t.Errorf("anonymous %s listing leaked %d entries, want none", root, len(body.Entries))
+		}
 	}
 }
 

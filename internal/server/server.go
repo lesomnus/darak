@@ -379,7 +379,41 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	s.serveFile(w, r, user, p, st)
 }
 
+// listPublicTeams answers the anonymous listing of the `teams` root with only
+// the folders the roster declares public, presented as ordinary directory
+// entries. Without an Admin to read the roster it lists nothing rather than
+// falling back to the real directory — the point is precisely not to enumerate
+// it. The kernel still gates entry into each one.
+func (s *Server) listPublicTeams(w http.ResponseWriter, r *http.Request) {
+	out := []Entry{}
+	if s.cfg.Admin != nil {
+		if folders, err := s.cfg.Admin.PublicFolders(r.Context()); err == nil {
+			for _, f := range folders {
+				out = append(out, Entry{Name: f.Name, Dir: true})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": "teams", "entries": out})
+}
+
 func (s *Server) listDir(w http.ResponseWriter, r *http.Request, user, p string) {
+	// An anonymous visitor must not be able to enumerate the top of the tree:
+	// listing `teams` or `homes` directly would leak every team and account name,
+	// even though the folders themselves stay closed to it. So for the anonymous
+	// identity those two roots are answered from the roster's public set (for
+	// `teams`) or as empty (`homes`). Deeper paths are untouched, and the kernel
+	// still guards what the anonymous account may actually open.
+	if s.isAnon(r) {
+		switch path.Clean(p) {
+		case "teams":
+			s.listPublicTeams(w, r)
+			return
+		case "homes":
+			writeJSON(w, http.StatusOK, map[string]any{"path": p, "entries": []Entry{}})
+			return
+		}
+	}
+
 	ents, err := s.cfg.FS.ReadDir(r.Context(), user, p, true)
 	if err != nil {
 		writeFSError(w, err)

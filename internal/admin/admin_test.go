@@ -442,6 +442,29 @@ func teamFixture() (*fakeRunner, fakeResolver) {
 	return r, res
 }
 
+// PublicFolders reports exactly the groups whose anonymous level is read or
+// write, sorted, with the write flag set only for the writable ones.
+func TestPublicFolders(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{
+		"usersync roster": `{"groups":[
+			{"name":"secret","gid":10001,"owners":[],"readers":[],"anonymous":"none"},
+			{"name":"dropbox","gid":10004,"owners":[],"readers":[],"anonymous":"write"},
+			{"name":"handbook","gid":10003,"owners":[],"readers":[],"anonymous":"read"},
+			{"name":"plain","gid":10002,"owners":[],"readers":[]}
+		],"users":[]}`,
+	}}
+	a := newTestAdmin(t, r, fakeResolver{})
+
+	got, err := a.PublicFolders(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sorted by name; only handbook (read) and dropbox (write) are public.
+	if len(got) != 2 || got[0].Name != "dropbox" || !got[0].Write || got[1].Name != "handbook" || got[1].Write {
+		t.Fatalf("PublicFolders = %+v, want [dropbox(write), handbook(read)]", got)
+	}
+}
+
 // Owner and admin are separate axes. alice owns team-a AND is in the admin
 // group in this fixture; bob is an admin in no sense; carol is neither.
 func TestOwnedTeamsComesFromTheDeclaration(t *testing.T) {
