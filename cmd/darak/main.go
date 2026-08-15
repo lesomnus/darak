@@ -59,6 +59,7 @@ func realMain() error {
 		tlsKey        = flag.String("tls-key", "", "PEM private key")
 		allowRemapped = flag.Bool("allow-remapped-uids", false, "start even though uids here are not the numbers on disk (see the error this suppresses)")
 		adminGroup    = flag.String("admin-group", admin.DefaultGroup, "POSIX group whose members may use the operator page; empty disables it")
+		anonymousUser = flag.String("anonymous-user", "", "OS account to serve unauthenticated web requests as, for public (roster `anonymous:`) folders; must exist in NSS, be in no group, and have no SMB credential. Empty disables anonymous access entirely")
 		usageInterval = flag.Duration("usage-interval", 30*time.Minute, "how often per-user disk usage is remeasured")
 		activityDir   = flag.String("activity", "/var/lib/darak/activity", "where the who-changed-what record is kept; empty disables it")
 		activityKeep  = flag.Duration("activity-keep", activity.DefaultKeep, "how long to keep activity records (permanent retention is a backup's job)")
@@ -305,6 +306,7 @@ func realMain() error {
 		SessionTTL:    *sessionTTL,
 		SecureCookies: *secureCookies,
 		MaxUpload:     *maxUpload,
+		AnonymousUser: *anonymousUser,
 	})
 	if err != nil {
 		return err

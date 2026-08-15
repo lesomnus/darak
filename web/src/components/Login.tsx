@@ -5,9 +5,13 @@ import type { Branding, Me, SSONotice } from '../types'
 export function Login({
   brand,
   onSignedIn,
+  onCancel,
 }: {
   brand: Branding
   onSignedIn: (me: Me) => void
+  /** When set, the page offers a way back — for an anonymous visitor who opened
+   *  it from the public folders and decided not to sign in after all. */
+  onCancel?: () => void
 }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -120,6 +124,11 @@ export function Login({
         <button type="submit" disabled={busy}>
           {busy ? '확인 중…' : '로그인'}
         </button>
+        {onCancel && (
+          <button type="button" className="ghost" onClick={onCancel}>
+            공개 폴더 계속 둘러보기
+          </button>
+        )}
         {/* The one credential, shared with SMB — worth saying, because it is the
             question people ask first. */}
         <p className="muted small">탐색기에서 쓰는 비밀번호와 같습니다.</p>

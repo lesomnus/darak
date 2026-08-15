@@ -34,6 +34,8 @@ export function TopBar({
   onShares,
   onPassword,
   onSignOut,
+  anonymous,
+  onSignIn,
 }: {
   brand: Branding
   path: string
@@ -52,6 +54,9 @@ export function TopBar({
   onShares: () => void
   onPassword: () => void
   onSignOut: () => void
+  /** Browsing without a session: the account menu is replaced by a sign-in. */
+  anonymous?: boolean
+  onSignIn?: () => void
 }) {
   return (
     <header>
@@ -61,19 +66,39 @@ export function TopBar({
       <div className="topbar">
         <Brand brand={brand} onClick={() => onNavigate('')} />
         <SearchBox query={query} onQuery={onQuery} enabled={searchable} />
-        <AppMenu
-          user={user}
-          path={path}
-          theme={theme}
-          onTheme={onTheme}
-          canAdmin={canAdmin}
-          open={menuOpen}
-          onOpenChange={onMenuOpen}
-          onNavigate={onNavigate}
-          onShares={onShares}
-          onPassword={onPassword}
-          onSignOut={onSignOut}
-        />
+        {anonymous ? (
+          // No account, so no account menu: a theme toggle and a way in. The
+          // person is looking at public folders and the only thing they might
+          // want that they cannot do anonymously is sign in.
+          <div className="anon-controls">
+            <button
+              type="button"
+              className="tiny ghost"
+              aria-label="화면 테마 전환"
+              title="화면 테마"
+              onClick={() => onTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+            </button>
+            <button type="button" className="button" onClick={() => onSignIn?.()}>
+              로그인
+            </button>
+          </div>
+        ) : (
+          <AppMenu
+            user={user}
+            path={path}
+            theme={theme}
+            onTheme={onTheme}
+            canAdmin={canAdmin}
+            open={menuOpen}
+            onOpenChange={onMenuOpen}
+            onNavigate={onNavigate}
+            onShares={onShares}
+            onPassword={onPassword}
+            onSignOut={onSignOut}
+          />
+        )}
       </div>
 
       {/* Not on the start page: there the whole content is the two places you

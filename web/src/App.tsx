@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
-import type { Me } from './types'
+import type { Me, PublicFolder } from './types'
 import { usePath } from './lib/usePath'
 import { useTheme } from './lib/useTheme'
 import { useBranding } from './lib/useBranding'
@@ -33,6 +33,10 @@ export function App() {
   const [sharePath, setSharePath] = useState<string | null>(null)
   const [showShares, setShowShares] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
+  // An anonymous visitor asked to sign in. Kept separate from the session so
+  // cancelling returns them to the public folders they were browsing rather
+  // than to a locked-out screen.
+  const [wantsLogin, setWantsLogin] = useState(false)
   // Whether to OFFER the page. The gate is on the server, on every route, so
   // this only decides whether a link is drawn -- a browser that lies to itself
   // reaches nothing it could not reach anyway.
@@ -55,7 +59,9 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (session.state !== 'in') return
+    // The anonymous visitor owns nothing and administers nothing; asking would
+    // only 401. Skip it, and leave both at their empty defaults.
+    if (session.state !== 'in' || session.me.anonymous) return
     let cancelled = false
     api
       .adminWhoami()
@@ -102,10 +108,23 @@ export function App() {
   }
 
   if (session.state === 'unknown') return null
-  if (session.state === 'out') {
+  const anonymous = session.state === 'in' && session.me.anonymous === true
+  // The login screen shows when there is no session at all, or when an anonymous
+  // visitor asked for it. In the anonymous case cancelling returns them to the
+  // public folders, so the screen is not a dead end.
+  if (session.state === 'out' || wantsLogin) {
     // usePlaces is called unconditionally above, so this early return does not
     // skip a hook.
-    return <Login brand={brand} onSignedIn={(me) => setSession({ state: 'in', me })} />
+    return (
+      <Login
+        brand={brand}
+        onSignedIn={(me) => {
+          setSession({ state: 'in', me })
+          setWantsLogin(false)
+        }}
+        onCancel={anonymous ? () => setWantsLogin(false) : undefined}
+      />
+    )
   }
 
   const user = session.me.user
@@ -130,6 +149,8 @@ export function App() {
         onShares={() => setShowShares(true)}
         onPassword={() => setChangingPassword(true)}
         onSignOut={() => void signOut()}
+        anonymous={anonymous}
+        onSignIn={() => setWantsLogin(true)}
       />
 
       {error && (
@@ -138,7 +159,25 @@ export function App() {
         </p>
       )}
 
-      {path === ADMIN_PATH ? (
+      {anonymous ? (
+        // No account: the operator page is unreachable, so the admin path just
+        // falls back to the public landing. Browsing works the same — the
+        // kernel decides what the anonymous account can open.
+        path === '' || path === ADMIN_PATH ? (
+          <AnonStart onNavigate={navigate} onError={report} onSignIn={() => setWantsLogin(true)} />
+        ) : (
+          <Browser
+            path={path}
+            query={query}
+            isFavourite={places.isFavourite}
+            onToggleFavourite={places.toggleFavourite}
+            onNavigate={navigate}
+            onError={report}
+            // No sessionless sharing: the share routes need a signed-in user.
+            onShare={undefined}
+          />
+        )
+      ) : path === ADMIN_PATH ? (
         // Rendered only when the server said so. If it did not, the panels
         // inside would each 404 -- which is the same answer a non-admin gets
         // for the API, so nothing is disclosed by trying.
@@ -268,6 +307,76 @@ function Start({
           </button>
         </p>
       )}
+    </main>
+  )
+}
+
+/**
+ * The anonymous landing: the folders anyone may open without signing in.
+ *
+ * These come from the roster's `anonymous:` levels, not from a directory scan,
+ * so the list is exactly what was declared public — a read-only folder is marked
+ * as such, a writable one as read-write. Everything else on the server stays
+ * invisible, and the kernel still decides what the anonymous account can open.
+ */
+function AnonStart({
+  onNavigate,
+  onError,
+  onSignIn,
+}: {
+  onNavigate: (path: string) => void
+  onError: (message: string) => void
+  onSignIn: () => void
+}) {
+  const [folders, setFolders] = useState<PublicFolder[] | null>(null)
+  useEffect(() => {
+    const ac = new AbortController()
+    api
+      .publicFolders(ac.signal)
+      .then((r) => setFolders(r.folders))
+      .catch((e) => {
+        if (ac.signal.aborted) return
+        setFolders([])
+        onError(e instanceof Error ? e.message : '공개 폴더를 불러오지 못했습니다.')
+      })
+    return () => ac.abort()
+  }, [onError])
+
+  return (
+    <main className="start">
+      <p className="muted anon-lead">로그인 없이 볼 수 있는 공개 폴더입니다.</p>
+
+      {folders === null ? (
+        <p className="muted">불러오는 중…</p>
+      ) : folders.length === 0 ? (
+        <p className="start-hint">아직 공개된 폴더가 없습니다.</p>
+      ) : (
+        folders.map((f) => (
+          <button
+            key={f.name}
+            type="button"
+            className="row"
+            onClick={() => onNavigate(`teams/${f.name}`)}
+          >
+            <span className="icon" data-kind="folder">
+              <Icon name="team" size={22} />
+            </span>
+            <span className="name">
+              {f.name}
+              {f.description && <span className="muted small"> — {f.description}</span>}
+            </span>
+            <span className="muted small anon-tag">{f.write ? '읽기·쓰기' : '읽기 전용'}</span>
+            <Icon name="chevron" size={16} className="go" />
+          </button>
+        ))
+      )}
+
+      <p className="start-hint">
+        계정이 있으신가요?{' '}
+        <button type="button" className="ghost" onClick={onSignIn}>
+          로그인
+        </button>
+      </p>
     </main>
   )
 }

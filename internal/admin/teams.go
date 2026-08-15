@@ -37,6 +37,10 @@ type DeclaredGroup struct {
 	GID         uint32   `json:"gid"`
 	Description string   `json:"description,omitempty"`
 	Owners      []string `json:"owners"`
+	// Anonymous is the folder's unauthenticated-access level: "none", "read", or
+	// "write". It is what tells the interface a folder is public, so an anonymous
+	// visitor can be shown where to look; the kernel still enforces the access.
+	Anonymous string `json:"anonymous,omitempty"`
 }
 
 type DeclaredUser struct {
@@ -85,6 +89,35 @@ func (a *Admin) OwnedTeams(ctx context.Context, user string) ([]string, error) {
 	}
 	slices.Sort(owned)
 	return owned, nil
+}
+
+// PublicFolder is one folder open to anonymous visitors.
+type PublicFolder struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Write is true when the folder is anonymous:write (anyone may write, not
+	// only read), so the interface can say which it is.
+	Write bool `json:"write"`
+}
+
+// PublicFolders lists the folders the roster opens to anonymous visitors, sorted
+// by name. It reads the declaration, not the system: a folder is public because
+// the roster says so, which is also what usersync used to set the mode bits the
+// kernel enforces.
+func (a *Admin) PublicFolders(ctx context.Context) ([]PublicFolder, error) {
+	d, err := a.Declaration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []PublicFolder{}
+	for _, g := range d.Groups {
+		switch g.Anonymous {
+		case "read", "write":
+			out = append(out, PublicFolder{Name: g.Name, Description: g.Description, Write: g.Anonymous == "write"})
+		}
+	}
+	slices.SortFunc(out, func(x, y PublicFolder) int { return strings.Compare(x.Name, y.Name) })
+	return out, nil
 }
 
 // MayManageTeam reports whether the actor can change the team's membership.

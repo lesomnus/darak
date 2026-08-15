@@ -768,6 +768,21 @@ main {
   display: inline-flex;
   margin: 0.85rem auto 0;
 }
+/* Anonymous browsing: the top-bar controls (theme + sign-in) that stand in for
+   the account menu, and the public-folder landing's lead line and read/write
+   tag. */
+.anon-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.anon-lead {
+  margin: 0 0.35rem 0.4rem;
+}
+.anon-tag {
+  margin-left: auto;
+  white-space: nowrap;
+}
 /* An icon sitting inside a sentence, rather than beside a label. */
 .inline-ico {
   display: inline-block;

@@ -100,8 +100,22 @@ func newHarness(t *testing.T, a auth.Authenticator) *harness {
 		t.Fatal(err)
 	}
 
-	for _, d := range []string{"homes", "homes/alice", "teams", "teams/design"} {
-		if err := os.Mkdir(filepath.Join(root, d), 0o755); err != nil {
+	// Realistic domain perms: the roots are traversable (0755), a home is private
+	// (0700), a team folder is setgid group-only (2770, no "other" bits). This
+	// matters because a new object now inherits its parent's "other" bits, so a
+	// harness that left every parent world-readable would mask that behaviour.
+	for _, d := range []struct {
+		path string
+		mode os.FileMode
+	}{
+		{"homes", 0o755}, {"homes/alice", 0o700},
+		{"teams", 0o755}, {"teams/design", 0o2770},
+	} {
+		if err := os.Mkdir(filepath.Join(root, d.path), d.mode); err != nil {
+			t.Fatal(err)
+		}
+		// Mkdir is subject to umask; force the exact mode (esp. setgid).
+		if err := os.Chmod(filepath.Join(root, d.path), d.mode); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -340,6 +354,49 @@ func TestETagChangesWhenTheFileIsReplaced(t *testing.T) {
 // A file uploaded through the web and one dropped into the SMB share have to end
 // up with the same mode, or "same data, same permission rules" fails exactly
 // where a user would notice: a teammate who cannot edit what you uploaded.
+// A public folder (its "other" bits opened by usersync) propagates that reach to
+// what is created inside it over the web, with no roster lookup: a file becomes
+// world-readable under a 2775 folder and world-writable under 2777, a subdir
+// world-traversable, and a file never gains execute.
+func TestUploadInheritsPublicOtherBits(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	c := h.login("alice")
+
+	for _, tt := range []struct {
+		dir               string
+		dirMode           os.FileMode
+		wantFile, wantSub os.FileMode
+	}{
+		{"teams/pub-r", 0o2775, 0o664, 0o2775},
+		{"teams/pub-w", 0o2777, 0o666, 0o2777},
+	} {
+		if err := os.Mkdir(filepath.Join(h.root, tt.dir), tt.dirMode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(h.root, tt.dir), tt.dirMode); err != nil {
+			t.Fatal(err)
+		}
+
+		if rec := h.do("PUT", "/api/files/"+tt.dir+"/doc.txt", strings.NewReader("x"), c); rec.Code != http.StatusNoContent {
+			t.Fatalf("put into %s: %d %s", tt.dir, rec.Code, rec.Body)
+		}
+		if fi, err := os.Stat(filepath.Join(h.root, tt.dir, "doc.txt")); err != nil {
+			t.Fatal(err)
+		} else if fi.Mode().Perm() != tt.wantFile {
+			t.Errorf("%s file mode = %04o, want %04o", tt.dir, fi.Mode().Perm(), tt.wantFile)
+		}
+
+		if rec := h.do("POST", "/api/dirs/"+tt.dir+"/sub", nil, c); rec.Code != http.StatusNoContent {
+			t.Fatalf("mkdir under %s: %d %s", tt.dir, rec.Code, rec.Body)
+		}
+		if fi, err := os.Stat(filepath.Join(h.root, tt.dir, "sub")); err != nil {
+			t.Fatal(err)
+		} else if fi.Mode().Perm() != tt.wantSub&0o777 {
+			t.Errorf("%s subdir perm = %03o, want %03o", tt.dir, fi.Mode().Perm(), tt.wantSub&0o777)
+		}
+	}
+}
+
 func TestUploadModeMatchesTheDomain(t *testing.T) {
 	h := newHarness(t, fakeAuth{ok: true})
 	c := h.login("alice")

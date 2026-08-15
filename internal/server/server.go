@@ -7,6 +7,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,6 +102,16 @@ type Config struct {
 	// purpose: silently omitting it in production is worse than making the
 	// deployment say which it is.
 	SecureCookies bool
+
+	// AnonymousUser is the OS account file requests without a session are served
+	// as. Empty (the default) disables anonymous access entirely: no session,
+	// no answer, exactly as before. When set, an unauthenticated file request is
+	// run as this account instead of refused — and because that account is a
+	// member of no group, the kernel confines it to world-accessible (public)
+	// folders and nothing else. darak makes no access decision here; it never
+	// does. The account must exist in NSS, have NO SMB (tdbsam) credential — so
+	// anonymous access can never reach the SMB path — and belong to no group.
+	AnonymousUser string
 	// MaxUpload caps a single request body.
 	MaxUpload int64
 }
@@ -150,7 +161,12 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
-	mux.HandleFunc("GET /api/whoami", s.authed(s.handleWhoami))
+	// whoami answers for the anonymous visitor too, so the UI can tell it is
+	// browsing anonymously and offer a sign-in rather than a locked door.
+	mux.HandleFunc("GET /api/whoami", s.authedOrAnon(s.handleWhoami))
+	// The public folders an anonymous visitor may browse without signing in.
+	// Reads the roster's `anonymous` levels; 404 without an Admin to read it.
+	mux.HandleFunc("GET /api/public", s.authedOrAnon(s.handlePublicFolders))
 	// Behind authed, and it still asks for the current password: a session is a
 	// bearer token, and one that leaks must not be enough to take an account
 	// away from the person who owns it.
@@ -169,13 +185,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/branding", s.handleBranding)
 	mux.HandleFunc("GET /api/branding/logo", s.handleBrandingLogo)
 
-	mux.HandleFunc("GET /api/files/", s.authed(s.handleGet))
-	mux.HandleFunc("PUT /api/files/", s.authed(s.handlePut))
-	mux.HandleFunc("DELETE /api/files/", s.authed(s.handleDelete))
-	mux.HandleFunc("POST /api/dirs/", s.authed(s.handleMkdir))
-	mux.HandleFunc("GET /api/mode/", s.authed(s.handleModeInfo))
+	// File operations admit the anonymous visitor; the kernel then decides what
+	// that group-less account can actually touch (read anywhere world-readable,
+	// write/create/delete only where world-writable — i.e. the public folders).
+	mux.HandleFunc("GET /api/files/", s.authedOrAnon(s.handleGet))
+	mux.HandleFunc("PUT /api/files/", s.authedOrAnon(s.handlePut))
+	mux.HandleFunc("DELETE /api/files/", s.authedOrAnon(s.handleDelete))
+	mux.HandleFunc("POST /api/dirs/", s.authedOrAnon(s.handleMkdir))
+	mux.HandleFunc("GET /api/mode/", s.authedOrAnon(s.handleModeInfo))
+	// Changing a mode is an ownership act, not a file op: kept to signed-in users
+	// so an anonymous visitor cannot re-permission a public folder's contents.
 	mux.HandleFunc("POST /api/mode/", s.authed(s.handleChmod))
-	mux.HandleFunc("GET /api/search/", s.authed(s.handleSearch))
+	mux.HandleFunc("GET /api/search/", s.authedOrAnon(s.handleSearch))
 
 	mux.HandleFunc("POST /api/shares", s.authed(s.handleShareCreate))
 	mux.HandleFunc("GET /api/shares", s.authed(s.handleShareList))
@@ -254,6 +275,36 @@ func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// authedOrAnon is authed with an anonymous fallback. A request carrying a valid
+// session is served as that user, exactly as authed. A request WITHOUT one is,
+// when AnonymousUser is configured, served as that account instead of refused —
+// so an unauthenticated visitor can read (and, where the folder's mode allows,
+// write) the public folders, and only those, because the kernel confines the
+// group-less anonymous account to world-accessible paths. With no AnonymousUser
+// set it behaves exactly like authed's 401. The user still comes only from the
+// session or this fixed account — never from a header, query or path.
+func (s *Server) authedOrAnon(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie(CookieName); err == nil {
+			if user, ok := s.sessions.Lookup(c.Value); ok {
+				next(w, r.WithContext(contextWithUser(r.Context(), user)))
+				return
+			}
+		}
+		if s.cfg.AnonymousUser == "" {
+			writeError(w, http.StatusUnauthorized, "not signed in")
+			return
+		}
+		next(w, r.WithContext(contextWithUser(r.Context(), s.cfg.AnonymousUser)))
+	}
+}
+
+// isAnon reports whether the request is being served as the anonymous account
+// rather than a signed-in user.
+func (s *Server) isAnon(r *http.Request) bool {
+	return s.cfg.AnonymousUser != "" && userOf(r) == s.cfg.AnonymousUser
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		User     string `json:"user"`
@@ -295,7 +346,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"user": userOf(r)})
+	writeJSON(w, http.StatusOK, map[string]any{"user": userOf(r), "anonymous": s.isAnon(r)})
 }
 
 // --- files ---
@@ -382,6 +433,57 @@ func etagOf(st *wire.Stat) string {
 	return fmt.Sprintf(`"%x-%x-%x.%x"`, st.Ino, st.Size, st.MtimeSec, st.MtimeNsec)
 }
 
+// inheritOtherBits widens a new object's mode with the "other" (world) bits of
+// its parent directory, so content created under a public folder is as reachable
+// to the world as the folder itself: a file becomes world-readable under an
+// anonymous:read folder and world-writable under anonymous:write, while under a
+// private folder (no other bits) nothing changes. A file never inherits the
+// execute bit; a directory inherits all three.
+//
+// The parent's on-disk mode is the single source of truth — usersync set it
+// from the roster — so this needs no roster lookup and can never disagree with
+// what the kernel actually enforces. It also keeps the web and SMB paths on one
+// rule: smbd's public masks (0664/0666, 2775/2777) reproduce exactly this.
+//
+// A parent that cannot be stat'd (gone, or unreadable to this user) leaves the
+// base mode untouched; the create that follows fails on its own if it must.
+func (s *Server) inheritOtherBits(ctx context.Context, user, p string, mode uint32, dir bool) uint32 {
+	st, err := s.cfg.FS.Stat(ctx, user, path.Dir(p))
+	if err != nil {
+		return mode
+	}
+	return widenOther(mode, st.Mode, dir)
+}
+
+// widenOther folds the "other" bits of parentMode into mode. A directory takes
+// all three (r, w, x); a plain file takes read and write but never execute — a
+// file is not executable just because the folder holding it is traversable.
+func widenOther(mode, parentMode uint32, dir bool) uint32 {
+	other := parentMode & 0o007
+	if !dir {
+		other &^= 0o001
+	}
+	return mode | other
+}
+
+// handlePublicFolders lists the folders open to anonymous visitors, from the
+// roster's `anonymous` levels. It powers the anonymous landing page (what can I
+// look at without signing in) and is harmless to a signed-in user too. Without
+// an Admin to read the roster there is nothing to list, so it 404s like every
+// other roster-backed surface.
+func (s *Server) handlePublicFolders(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Admin == nil {
+		writeError(w, http.StatusNotFound, "not available")
+		return
+	}
+	folders, err := s.cfg.Admin.PublicFolders(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "could not read the roster: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"folders": folders})
+}
+
 func (s *Server) handlePut(w http.ResponseWriter, r *http.Request) {
 	user, p := userOf(r), requestPath(r, "/api/files/")
 	if p == "" {
@@ -393,6 +495,7 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	mode = s.inheritOtherBits(r.Context(), user, p, mode, false)
 
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload)
 	defer body.Close()
@@ -427,6 +530,7 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	mode = s.inheritOtherBits(r.Context(), user, p, mode, true)
 	if err := s.cfg.FS.Mkdir(r.Context(), user, p, mode); err != nil {
 		writeFSError(w, err)
 		return

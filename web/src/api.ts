@@ -12,6 +12,7 @@ import {
   type Listing,
   type Me,
   type ProvisionView,
+  type PublicFolder,
   type SSONotice,
   type SearchDone,
   type SearchHit,
@@ -101,6 +102,10 @@ async function request<T>(url: string, opts: RequestOptions = {}): Promise<T> {
 
 export const api = {
   whoami: () => request<Me>('/api/whoami'),
+
+  // The folders open to anonymous visitors, for the not-signed-in landing page.
+  publicFolders: (signal?: AbortSignal) =>
+    request<{ folders: PublicFolder[] }>('/api/public', { signal }),
 
   // No session required: the login page carries the mark as well.
   branding: () => request<Branding>('/api/branding'),

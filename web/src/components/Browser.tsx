@@ -34,7 +34,8 @@ export function Browser({
   onToggleFavourite: (path: string) => void
   onNavigate: (path: string) => void
   onError: (message: string) => void
-  onShare: (path: string) => void
+  /** Absent for an anonymous visitor: the share routes need a signed-in user. */
+  onShare?: (path: string) => void
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -350,7 +351,7 @@ export function Browser({
                       setPreviewing({ path: child, entry })
                     else window.location.href = filesUrl(child)
                   }}
-                  onShare={() => onShare(child)}
+                  onShare={onShare ? () => onShare(child) : undefined}
                   onDelete={() => void remove(entry)}
                   onToggleFavourite={() => onToggleFavourite(child)}
                   onChmod={() => setChmodding({ path: child, entry })}

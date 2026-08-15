@@ -59,6 +59,21 @@ export interface ShareLink {
 
 export interface Me {
   user: string
+  /**
+   * True when the server answered as the anonymous account rather than a
+   * signed-in user: the visitor is browsing the public folders without a
+   * session. The interface then offers a sign-in instead of a personal home,
+   * and hides everything that belongs to an account.
+   */
+  anonymous?: boolean
+}
+
+/** One folder the roster opens to anonymous visitors (GET /api/public). */
+export interface PublicFolder {
+  name: string
+  description?: string
+  /** True when anyone may write, not only read (anonymous:write). */
+  write?: boolean
 }
 
 /**

@@ -32,7 +32,8 @@ export function FileRow({
   inTrash: boolean
   favourite: boolean
   onOpen: () => void
-  onShare: () => void
+  /** Absent for an anonymous visitor: sessionless sharing is not offered. */
+  onShare?: () => void
   onDelete: () => void
   onToggleFavourite: () => void
   onChmod: () => void
@@ -147,10 +148,12 @@ export function FileRow({
                       <Icon name="download" size={18} />
                       다운로드
                     </Menu.Item>
-                    <Menu.Item className="menu-item" onSelect={onShare}>
-                      <Icon name="link" size={18} />
-                      공유 링크 만들기
-                    </Menu.Item>
+                    {onShare && (
+                      <Menu.Item className="menu-item" onSelect={onShare}>
+                        <Icon name="link" size={18} />
+                        공유 링크 만들기
+                      </Menu.Item>
+                    )}
                   </>
                 )}
                 {/* Only folders. A favourite is somewhere to GO -- starring a
