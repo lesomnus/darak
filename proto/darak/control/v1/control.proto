@@ -1,0 +1,154 @@
+syntax = "proto3";
+
+// darak's control plane, as resources.
+//
+// This is the seam between darak — which decides WHO may do a thing (an admin,
+// a team's owner) — and whatever actually owns the roster: a service that
+// creates accounts and edits group membership by opening a change against the
+// version-controlled source. darak is the gate; the server behind this contract
+// is the sink that "just does what it is told". There is no database here and
+// darak keeps none: the roster stays the single source of truth, and this API
+// only asks the thing that owns it to change it.
+//
+// The shape follows payday (github.com/lesomnus/payday): a resource per concept,
+// each with the standard method vocabulary — Add / Get / List / Erase — rather
+// than a verb per operation. A membership is a resource, so joining a group is
+// Add and leaving is Erase; an onboarding is a resource, so requesting one is
+// Add and asking how far it got is Get.
+package darak.control.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/lesomnus/darak/internal/control/controlpb;controlpb";
+
+// Enrollment is an in-progress onboarding of an identity that signed in through
+// SSO and resolves to no account yet. darak Adds one on that first sign-in and
+// Gets it afterwards to tell the person how far it has got — turning what used
+// to be a fire-and-forget webhook into something a page can track.
+message Enrollment {
+  // Stable id the client tracks the enrollment by. Assigned by the server on
+  // Add; supplied on Get and Erase.
+  string id = 1;
+
+  // Who the provider said this is. The subject is the durable handle; the
+  // addresses are what a rule and a person read.
+  string issuer = 2;
+  string subject = 3;
+  repeated string emails = 4;
+
+  // Display name from the provider, for a person reviewing the request.
+  string name = 5;
+
+  // Where the request stands right now. This is what the interface renders as
+  // live progress instead of one static "waiting for approval" line.
+  Stage stage = 6;
+
+  // The account, once one exists. Empty until stage is READY.
+  string account = 7;
+
+  // A human-readable line for the pending person, from the server. Optional;
+  // darak supplies a default per stage when it is empty.
+  string message = 8;
+}
+
+// Stage is where an enrollment stands. It only moves forward, except that a
+// FAILED one may be retried into REQUESTED.
+enum Stage {
+  STAGE_UNSPECIFIED = 0;
+  // Recorded; nothing has started (the approval queue, with no automation).
+  STAGE_REQUESTED = 1;
+  // The account is being created (a change is open against the roster).
+  STAGE_CREATING = 2;
+  // A person has to decide before it can proceed.
+  STAGE_AWAITING_APPROVAL = 3;
+  // The account exists and may sign in. account is set.
+  STAGE_READY = 4;
+  // This identity will not be given an account here.
+  STAGE_DENIED = 5;
+  // A transient failure; the next attempt may get further.
+  STAGE_FAILED = 6;
+}
+
+message AddEnrollmentRequest {
+  string issuer = 1;
+  string subject = 2;
+  repeated string emails = 3;
+  string name = 4;
+}
+
+message GetEnrollmentRequest {
+  string id = 1;
+}
+
+message ListEnrollmentsRequest {
+  // Only enrollments in this stage, if set. The common read is "what is
+  // awaiting approval".
+  Stage stage = 1;
+  int32 size = 2;
+  string page = 3; // opaque cursor; empty for the first page
+}
+
+message ListEnrollmentsResponse {
+  repeated Enrollment enrollments = 1;
+  string next_page = 2; // empty when there is no more
+}
+
+message EraseEnrollmentRequest {
+  string id = 1;
+}
+
+// EnrollmentService is the onboarding lifecycle. darak calls Add on first
+// sign-in and Get to report progress; an operator page reads List and calls
+// Erase to discard a request.
+service EnrollmentService {
+  rpc Add(AddEnrollmentRequest) returns (Enrollment);
+  rpc Get(GetEnrollmentRequest) returns (Enrollment);
+  rpc List(ListEnrollmentsRequest) returns (ListEnrollmentsResponse);
+  rpc Erase(EraseEnrollmentRequest) returns (google.protobuf.Empty);
+}
+
+// Membership is an account's place in a group, as a resource. Adding one is
+// joining; erasing one is leaving. The role says what the place is worth.
+message Membership {
+  string account = 1;
+  string group = 2;
+  Role role = 3;
+}
+
+// Role is what a membership grants. It unifies what the roster spells three
+// ways: a writing member, a read-only reader group, and an owner (administrator
+// of the group).
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_MEMBER = 1; // read and write the group's folder
+  ROLE_READER = 2; // read only
+  ROLE_OWNER = 3;  // may add and remove the group's members
+}
+
+message AddMembershipRequest {
+  string account = 1;
+  string group = 2;
+  Role role = 3; // defaults to ROLE_MEMBER when unspecified
+}
+
+message EraseMembershipRequest {
+  string account = 1;
+  string group = 2;
+}
+
+message ListMembershipsRequest {
+  string group = 1;
+}
+
+message ListMembershipsResponse {
+  repeated Membership memberships = 1;
+}
+
+// MembershipService is what the operator page's "add to group" and "remove from
+// group" call. darak has already decided the caller may manage the group; the
+// server behind this only records the change.
+service MembershipService {
+  rpc Add(AddMembershipRequest) returns (Membership);
+  rpc Erase(EraseMembershipRequest) returns (google.protobuf.Empty);
+  rpc List(ListMembershipsRequest) returns (ListMembershipsResponse);
+}

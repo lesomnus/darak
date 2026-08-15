@@ -1,0 +1,17 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # Resource-oriented on purpose (following payday / AIP): Get and Add return
+    # the resource itself, and Erase returns Empty, so a response type is shared
+    # across RPCs and is not named <Method>Response. Requests are named after the
+    # resource (AddEnrollmentRequest), the AIP spelling, not <Method>Request.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_STANDARD_NAME
+breaking:
+  use:
+    - FILE
