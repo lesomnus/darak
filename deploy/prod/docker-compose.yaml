@@ -20,7 +20,7 @@ services:
       args:
         # Empty means the Dockerfile's pinned commit. See .env.example and
         # deploy/prod/README.md for why it is a commit and not a tag yet.
-        USERSYNC_VERSION: ${USERSYNC_VERSION:-83694507d0c3e664abe31683c77d348e80c1c1fa}
+        USERSYNC_VERSION: ${USERSYNC_VERSION:-33478f66b851a588a8ddf157c72d6206cf983705}
     image: darak:${DARAK_VERSION:-local}
 
     # Root inside the container: starting a helper AS the requesting user is the
