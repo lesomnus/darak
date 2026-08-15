@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -64,23 +65,46 @@ func TestEnrollmentOnUnmappedIdentity(t *testing.T) {
 	}
 }
 
-// The progress endpoint reports the stage and the account, and nothing else the
-// enrollment holds.
-func TestSSOEnrollmentProgress(t *testing.T) {
+// The progress endpoint streams the starting stage as an SSE event.
+func TestSSOEnrollmentStreamsInitialStage(t *testing.T) {
 	s := ssoServer(t)
-	s.cfg.Controller = &control.Controller{Enrollment: &fakeEnrollment{stage: controlpb.Stage_STAGE_READY, account: "new.person"}}
+	s.enroll.put("enr-y", "p", controlpb.Stage_STAGE_CREATING, time.Now().Add(time.Minute))
+
+	// A cancelled context makes the poll loop return after the first send, so the
+	// test does not wait on the ticker.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	s.handleSSOEnrollment(w, httptest.NewRequest("GET", "/api/sso/enrollment?id=enr-y", nil).WithContext(ctx))
+
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	if !strings.Contains(w.Body.String(), "STAGE_CREATING") {
+		t.Fatalf("stream = %q, want a CREATING event", w.Body.String())
+	}
+}
+
+// A control-plane stage that is already terminal (DENIED) is sent once and the
+// stream ends without polling.
+func TestSSOEnrollmentTerminalStageEndsImmediately(t *testing.T) {
+	s := ssoServer(t)
+	s.enroll.put("enr-d", "p", controlpb.Stage_STAGE_DENIED, time.Now().Add(time.Minute))
 
 	w := httptest.NewRecorder()
-	s.handleSSOEnrollment(w, httptest.NewRequest("GET", "/api/sso/enrollment?id=enr-x", nil))
-	var body struct {
-		Stage   string `json:"stage"`
-		Account string `json:"account"`
+	s.handleSSOEnrollment(w, httptest.NewRequest("GET", "/api/sso/enrollment?id=enr-d", nil))
+	if !strings.Contains(w.Body.String(), "STAGE_DENIED") {
+		t.Fatalf("stream = %q, want a DENIED event", w.Body.String())
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.Stage != "STAGE_READY" || body.Account != "new.person" {
-		t.Fatalf("progress = %+v, want READY/new.person", body)
+}
+
+// An unknown id is a 404 — nothing to follow.
+func TestSSOEnrollmentUnknownID(t *testing.T) {
+	s := ssoServer(t)
+	w := httptest.NewRecorder()
+	s.handleSSOEnrollment(w, httptest.NewRequest("GET", "/api/sso/enrollment?id=nope", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown enrollment = %d, want 404", w.Code)
 	}
 }
 
@@ -95,6 +119,7 @@ func ssoServer(t *testing.T) *Server {
 		sessions: NewSessions(time.Hour),
 		flows:    sso.NewFlows(),
 		notices:  newNotices(),
+		enroll:   newEnrollTracker(),
 	}
 }
 

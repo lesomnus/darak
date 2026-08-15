@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -489,6 +491,10 @@ func (s *Server) queueIdentity(w http.ResponseWriter, r *http.Request, ident *ss
 			} else {
 				slog.Info("started an enrollment",
 					"account", username, "subject", ident.Subject, "stage", e.GetStage().String())
+				// Remember what the page will follow: the username to poll the gate
+				// for (READY is this server's to decide, since the control plane
+				// cannot see NSS) and the stage the control plane started it at.
+				s.enroll.put(e.GetId(), username, e.GetStage(), time.Now().Add(30*time.Minute))
 				s.notice(w, r, notice{
 					Kind:         "enrollment",
 					EnrollmentID: e.GetId(),
@@ -540,6 +546,7 @@ func (s *Server) SweepSSO() {
 	s.notices.mu.Lock()
 	s.notices.sweep(time.Now())
 	s.notices.mu.Unlock()
+	s.enroll.sweep(time.Now())
 	if err := s.cfg.Pending.Sweep(); err != nil {
 		slog.Warn("could not persist the access request queue", "err", err)
 	}
@@ -884,31 +891,112 @@ func enrollMessage(stage controlpb.Stage, server string) string {
 	}
 }
 
-// handleSSOEnrollment reports where an onboarding stands, for the login page to
-// render as live progress. Unauthenticated — the id it is keyed by is the
-// capability, the same way the notice id is — and it returns only the stage, a
-// line to show, and the account once there is one, never the addresses or the
-// subject the enrollment also holds. It 404s without a control plane, since then
-// nothing is enrolled.
+// enrollTracker remembers, per enrollment id, the account name to watch for and
+// the stage the control plane started it at. It exists because READY is this
+// server's answer, not the control plane's: the control plane edits the roster's
+// source and cannot see whether usersync has applied it, but this server's gate
+// asks exactly that. So the id the page follows is looked up here, the gate is
+// polled, and READY is emitted when the account can actually sign in. Lost on a
+// restart, which just means the person signs in again.
+type enrollTracker struct {
+	mu sync.Mutex
+	m  map[string]enrollEntry
+}
+
+type enrollEntry struct {
+	username string
+	stage    controlpb.Stage
+	expires  time.Time
+}
+
+func newEnrollTracker() *enrollTracker { return &enrollTracker{m: map[string]enrollEntry{}} }
+
+func (e *enrollTracker) put(id, username string, stage controlpb.Stage, exp time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.m[id] = enrollEntry{username: username, stage: stage, expires: exp}
+}
+
+func (e *enrollTracker) get(id string) (enrollEntry, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	v, ok := e.m[id]
+	return v, ok
+}
+
+func (e *enrollTracker) sweep(now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for id, v := range e.m {
+		if now.After(v.expires) {
+			delete(e.m, id)
+		}
+	}
+}
+
+func terminalStage(s controlpb.Stage) bool {
+	return s == controlpb.Stage_STAGE_READY || s == controlpb.Stage_STAGE_DENIED
+}
+
+// handleSSOEnrollment streams where an onboarding stands, as Server-Sent Events,
+// for the login page to render as live progress. Unauthenticated — the id it is
+// keyed by is the capability, the same way the notice id is. Each event carries
+// only the stage, a line to show, and the account once it is READY, never the
+// addresses or subject the enrollment holds. It emits the starting stage, then
+// polls this server's own gate and emits READY the moment the account can sign
+// in; a control-plane stage that is already terminal (DENIED) is sent once and
+// the stream ends.
 func (s *Server) handleSSOEnrollment(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.Controller == nil {
+	entry, ok := s.enroll.get(r.URL.Query().Get("id"))
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "no id")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
-	e, err := s.cfg.Controller.Enrollment.Get(r.Context(), &controlpb.GetEnrollmentRequest{Id: id})
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "could not read the enrollment")
-		return
-	}
+	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{
-		"stage":   e.GetStage().String(),
-		"message": enrollMessage(e.GetStage(), e.GetMessage()),
-		"account": e.GetAccount(),
-	})
+	w.Header().Set("Connection", "keep-alive")
+
+	send := func(stage controlpb.Stage) {
+		account := ""
+		if stage == controlpb.Stage_STAGE_READY {
+			account = entry.username
+		}
+		b, _ := json.Marshal(map[string]any{
+			"stage":   stage.String(),
+			"message": enrollMessage(stage, ""),
+			"account": account,
+		})
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	send(entry.stage)
+	if terminalStage(entry.stage) {
+		return
+	}
+
+	ctx := r.Context()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	deadline := time.NewTimer(10 * time.Minute)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			return
+		case <-ticker.C:
+			if v, err := s.cfg.Gate.MaySignIn(ctx, entry.username); err == nil && v.Allowed {
+				send(controlpb.Stage_STAGE_READY)
+				return
+			}
+			send(entry.stage) // heartbeat: still creating
+		}
+	}
 }

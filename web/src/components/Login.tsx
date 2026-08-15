@@ -41,26 +41,21 @@ function EnrollmentCard({
 
   useEffect(() => {
     if (isTerminalStage(initialStage)) return
-    let stopped = false
-    let timer = 0
-    const ac = new AbortController()
-    async function tick() {
+    // Server-Sent Events: the server emits a stage each time it changes and
+    // closes the stream at a terminal one. EventSource reconnects on its own if
+    // the connection drops, so there is no polling loop to keep here.
+    const es = new EventSource(`/api/sso/enrollment?id=${encodeURIComponent(id)}`)
+    es.onmessage = (ev) => {
       try {
-        const p = await api.ssoEnrollment(id, ac.signal)
-        if (stopped) return
+        const p = JSON.parse(ev.data) as { stage: string; message: string; account: string }
         setStage(p.stage)
         if (p.message) setMessage(p.message)
-        if (!isTerminalStage(p.stage)) timer = window.setTimeout(tick, 3000)
+        if (isTerminalStage(p.stage)) es.close()
       } catch {
-        if (!stopped) timer = window.setTimeout(tick, 5000)
+        // A malformed frame is skipped; the next one replaces the state anyway.
       }
     }
-    timer = window.setTimeout(tick, 3000)
-    return () => {
-      stopped = true
-      ac.abort()
-      window.clearTimeout(timer)
-    }
+    return () => es.close()
   }, [id, initialStage])
 
   const failed = stage === 'STAGE_DENIED' || stage === 'STAGE_FAILED'

@@ -141,6 +141,7 @@ type Server struct {
 	sessions *Sessions
 	flows    *sso.Flows
 	notices  *notices
+	enroll   *enrollTracker
 }
 
 func New(cfg Config) (*Server, error) {
@@ -167,6 +168,7 @@ func New(cfg Config) (*Server, error) {
 		sessions: NewSessions(cfg.SessionTTL),
 		flows:    sso.NewFlows(),
 		notices:  newNotices(),
+		enroll:   newEnrollTracker(),
 	}, nil
 }
 
