@@ -783,6 +783,33 @@ main {
   margin-left: auto;
   white-space: nowrap;
 }
+/* The onboarding stepper on the login page: 요청됨 · 생성 중 · 승인 대기 · 준비됨,
+   with the reached ones solid and the current one emphasised. */
+.enroll-steps {
+  display: flex;
+  gap: 0.4rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.6rem 0 0;
+  font-size: 0.82em;
+}
+.enroll-steps li {
+  flex: 1;
+  text-align: center;
+  padding: 0.3rem 0.2rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  opacity: 0.55;
+}
+.enroll-steps li[data-state='done'] {
+  opacity: 1;
+}
+.enroll-steps li[data-state='active'] {
+  opacity: 1;
+  font-weight: 600;
+  border-color: currentColor;
+}
 /* An icon sitting inside a sentence, rather than beside a label. */
 .inline-ico {
   display: inline-block;

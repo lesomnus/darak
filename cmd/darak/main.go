@@ -324,6 +324,7 @@ func realMain() error {
 		Journal:        journal,
 		Gate:           gate,
 		TrustEmail:     *ssoTrustEmail,
+		Controller:     ctrl,
 		Provision:      provisioner,
 		ProvisionConfig: func() provision.Status {
 			if watcher == nil {

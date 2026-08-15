@@ -5,15 +5,84 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/control"
+	"github.com/lesomnus/darak/internal/control/controlpb"
 	"github.com/lesomnus/darak/internal/identity"
 	"github.com/lesomnus/darak/internal/provision"
 	"github.com/lesomnus/darak/internal/sso"
+	"google.golang.org/grpc"
 )
+
+// fakeEnrollment is a control-plane EnrollmentServiceClient. Embedding the
+// interface leaves List/Watch/Erase unimplemented — the tests here do not call
+// them.
+type fakeEnrollment struct {
+	controlpb.EnrollmentServiceClient
+	added   []string
+	stage   controlpb.Stage
+	account string
+}
+
+func (f *fakeEnrollment) Add(_ context.Context, in *controlpb.AddEnrollmentRequest, _ ...grpc.CallOption) (*controlpb.Enrollment, error) {
+	f.added = append(f.added, in.GetUsername())
+	return &controlpb.Enrollment{Id: "enr-" + in.GetUsername(), Stage: f.stage, Account: f.account}, nil
+}
+
+func (f *fakeEnrollment) Get(_ context.Context, in *controlpb.GetEnrollmentRequest, _ ...grpc.CallOption) (*controlpb.Enrollment, error) {
+	return &controlpb.Enrollment{Id: in.GetId(), Stage: f.stage, Account: f.account}, nil
+}
+
+// With a control plane, an unmapped identity is enrolled: the username is
+// derived from the address, an Enrollment is Added, and the notice the page gets
+// carries the id and stage to follow it by — not a static "waiting" line.
+func TestEnrollmentOnUnmappedIdentity(t *testing.T) {
+	s := ssoServer(t)
+	fake := &fakeEnrollment{stage: controlpb.Stage_STAGE_CREATING}
+	s.cfg.Controller = &control.Controller{Enrollment: fake}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/sso/callback", nil)
+	s.queueIdentity(w, r, ident("obj-x", "new.person@example.com"))
+
+	if len(fake.added) != 1 || fake.added[0] != "new.person" {
+		t.Fatalf("Enrollment.Add username = %v, want [new.person]", fake.added)
+	}
+	loc := w.Result().Header.Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, ok := s.notices.take(u.Query().Get("sso"))
+	if !ok || n.Kind != "enrollment" || n.Stage != "STAGE_CREATING" || n.EnrollmentID != "enr-new.person" {
+		t.Fatalf("enrollment notice = %+v", n)
+	}
+}
+
+// The progress endpoint reports the stage and the account, and nothing else the
+// enrollment holds.
+func TestSSOEnrollmentProgress(t *testing.T) {
+	s := ssoServer(t)
+	s.cfg.Controller = &control.Controller{Enrollment: &fakeEnrollment{stage: controlpb.Stage_STAGE_READY, account: "new.person"}}
+
+	w := httptest.NewRecorder()
+	s.handleSSOEnrollment(w, httptest.NewRequest("GET", "/api/sso/enrollment?id=enr-x", nil))
+	var body struct {
+		Stage   string `json:"stage"`
+		Account string `json:"account"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Stage != "STAGE_READY" || body.Account != "new.person" {
+		t.Fatalf("progress = %+v, want READY/new.person", body)
+	}
+}
 
 // ssoServer builds just enough Server to exercise the resolution order. The
 // file paths, the pool and the authenticator play no part in it: what an SSO

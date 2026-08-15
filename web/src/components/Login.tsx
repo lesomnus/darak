@@ -2,6 +2,94 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../api'
 import type { Branding, Me, SSONotice } from '../types'
 
+// The stages an onboarding passes through, in order, for the stepper. DENIED and
+// FAILED are not steps — they replace the card's tone rather than advance it.
+const ENROLL_STAGES: { key: string; label: string }[] = [
+  { key: 'STAGE_REQUESTED', label: '요청됨' },
+  { key: 'STAGE_CREATING', label: '생성 중' },
+  { key: 'STAGE_AWAITING_APPROVAL', label: '승인 대기' },
+  { key: 'STAGE_READY', label: '준비됨' },
+]
+
+function isTerminalStage(s: string): boolean {
+  return s === 'STAGE_READY' || s === 'STAGE_DENIED'
+}
+
+/**
+ * A first-time SSO sign-in that has no account yet, followed live.
+ *
+ * The notice handed the page an id and the stage it started at, so the first
+ * paint is the real state. From there it polls until the onboarding reaches a
+ * terminal stage — READY, at which point the person just signs in again (the
+ * form is right above), or DENIED. A static "waiting for approval" line was the
+ * thing that confused people; this says which of "being created", "waiting for
+ * an admin" and "ready" is actually true.
+ */
+function EnrollmentCard({
+  id,
+  initialStage,
+  initialMessage,
+  address,
+}: {
+  id: string
+  initialStage: string
+  initialMessage: string
+  address?: string
+}) {
+  const [stage, setStage] = useState(initialStage)
+  const [message, setMessage] = useState(initialMessage)
+
+  useEffect(() => {
+    if (isTerminalStage(initialStage)) return
+    let stopped = false
+    let timer = 0
+    const ac = new AbortController()
+    async function tick() {
+      try {
+        const p = await api.ssoEnrollment(id, ac.signal)
+        if (stopped) return
+        setStage(p.stage)
+        if (p.message) setMessage(p.message)
+        if (!isTerminalStage(p.stage)) timer = window.setTimeout(tick, 3000)
+      } catch {
+        if (!stopped) timer = window.setTimeout(tick, 5000)
+      }
+    }
+    timer = window.setTimeout(tick, 3000)
+    return () => {
+      stopped = true
+      ac.abort()
+      window.clearTimeout(timer)
+    }
+  }, [id, initialStage])
+
+  const failed = stage === 'STAGE_DENIED' || stage === 'STAGE_FAILED'
+  const active = ENROLL_STAGES.findIndex((s) => s.key === stage)
+
+  return (
+    <div className={failed ? 'error' : 'notice'} role="status" aria-live="polite">
+      <p>{message}</p>
+      {!failed && (
+        <ol className="enroll-steps">
+          {ENROLL_STAGES.map((s, i) => (
+            <li key={s.key} data-state={i < active ? 'done' : i === active ? 'active' : 'todo'}>
+              {s.label}
+            </li>
+          ))}
+        </ol>
+      )}
+      {stage === 'STAGE_READY' && (
+        <p className="small">준비됐습니다. 위에서 다시 로그인하세요.</p>
+      )}
+      {address && (
+        <p className="small">
+          인식된 주소: <code>{address}</code>
+        </p>
+      )}
+    </div>
+  )
+}
+
 export function Login({
   brand,
   onSignedIn,
@@ -72,7 +160,14 @@ export function Login({
         {/* What the sign-on attempt ended in. A pending request is not an
             error — the person did nothing wrong and there is something they can
             do right now, which is the last line of it. */}
-        {notice && (
+        {notice && notice.kind === 'enrollment' && notice.enrollment_id ? (
+          <EnrollmentCard
+            id={notice.enrollment_id}
+            initialStage={notice.stage ?? ''}
+            initialMessage={notice.message ?? ''}
+            address={notice.address}
+          />
+        ) : notice ? (
           <div className={notice.kind === 'pending' ? 'notice' : 'error'} role="alert">
             <p>{notice.message}</p>
             {notice.address && (
@@ -84,7 +179,7 @@ export function Login({
               <p className="small">계정이 있다면 지금도 아이디와 비밀번호로 로그인할 수 있습니다.</p>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* A link, not a fetch: the browser has to follow the redirect to the
             provider and come back with its own cookies. */}

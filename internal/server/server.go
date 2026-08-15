@@ -20,6 +20,7 @@ import (
 	"github.com/lesomnus/darak/internal/activity"
 	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/control"
 	"github.com/lesomnus/darak/internal/identity"
 	"github.com/lesomnus/darak/internal/provision"
 	"github.com/lesomnus/darak/internal/share"
@@ -78,6 +79,12 @@ type Config struct {
 	// set: the provider says who somebody is and knows nothing about whether
 	// this server still has an account for them.
 	Gate AccountGate
+
+	// Controller, when set, is the control plane an unmapped SSO identity is
+	// enrolled through: darak Adds an Enrollment (which starts the roster-update
+	// pipeline) and reports its Stage back to the person, instead of leaving them
+	// a static "waiting for approval" line. Nil keeps the pending-approval queue.
+	Controller *control.Controller
 
 	// TrustEmail, when true, binds an existing account to an SSO identity on the
 	// first sign-in WITHOUT an operator approval, whenever a trusted-domain
@@ -189,6 +196,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sso/callback", s.handleSSOCallback)
 	mux.HandleFunc("GET /api/sso/forward", s.handleSSOForward)
 	mux.HandleFunc("GET /api/sso/notice", s.handleSSONotice)
+	// Following an onboarding: the id in the notice is the capability, so no
+	// session, exactly like the notice it came in.
+	mux.HandleFunc("GET /api/sso/enrollment", s.handleSSOEnrollment)
 
 	// Not behind authed(): the login page carries the mark too, and it is drawn
 	// before anyone has signed in.

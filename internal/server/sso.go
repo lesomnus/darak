@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/control/controlpb"
 	"github.com/lesomnus/darak/internal/identity"
 	"github.com/lesomnus/darak/internal/provision"
 	"github.com/lesomnus/darak/internal/sso"
@@ -467,6 +468,39 @@ func (s *Server) provision(ctx context.Context, ident *sso.Identity) string {
 // Nothing is created and nothing is granted — this is a request, and it is kept
 // in a store that has no lookup path into the sign-in decision at all.
 func (s *Server) queueIdentity(w http.ResponseWriter, r *http.Request, ident *sso.Identity) {
+	// With a control plane, an unmapped identity is enrolled rather than queued:
+	// darak Adds an Enrollment (starting the roster-update pipeline) and hands the
+	// page an id to follow it by, so the person sees live progress instead of a
+	// static line. It falls through to the queue when no username can be derived
+	// or the control plane refuses — a person darak cannot name still gets a
+	// human to look at them.
+	if s.cfg.Controller != nil {
+		if username, ok := firstAccountName(ident.Emails); ok {
+			e, err := s.cfg.Controller.Enrollment.Add(r.Context(), &controlpb.AddEnrollmentRequest{
+				Username: username,
+				Issuer:   ident.Issuer,
+				Subject:  ident.Subject,
+				Emails:   ident.Emails,
+				Name:     ident.Name,
+			})
+			if err != nil {
+				slog.Warn("could not start an enrollment; queueing instead",
+					"subject", ident.Subject, "err", err)
+			} else {
+				slog.Info("started an enrollment",
+					"account", username, "subject", ident.Subject, "stage", e.GetStage().String())
+				s.notice(w, r, notice{
+					Kind:         "enrollment",
+					EnrollmentID: e.GetId(),
+					Stage:        e.GetStage().String(),
+					Message:      enrollMessage(e.GetStage(), e.GetMessage()),
+					Address:      firstEmail(ident.Emails),
+				})
+				return
+			}
+		}
+	}
+
 	req := identity.Request{
 		Issuer:  ident.Issuer,
 		Subject: ident.Subject,
@@ -523,6 +557,12 @@ type notice struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message"`
 	Address string `json:"address,omitempty"`
+
+	// For an "enrollment" notice: the id the page follows the onboarding by (see
+	// handleSSOEnrollment) and the stage it started at, so the first paint is the
+	// real state rather than a spinner.
+	EnrollmentID string `json:"enrollment_id,omitempty"`
+	Stage        string `json:"stage,omitempty"`
 
 	expires time.Time
 }
@@ -799,4 +839,76 @@ func accountFromEmail(email string) (string, bool) {
 		return "", false
 	}
 	return local, true
+}
+
+// firstAccountName is the account name the first usable address derives, for an
+// enrollment's username. An address whose local part is not a valid name is
+// skipped, not mangled.
+func firstAccountName(emails []string) (string, bool) {
+	for _, e := range emails {
+		if a, ok := accountFromEmail(e); ok {
+			return a, true
+		}
+	}
+	return "", false
+}
+
+func firstEmail(emails []string) string {
+	if len(emails) > 0 {
+		return emails[0]
+	}
+	return ""
+}
+
+// enrollMessage is the line shown to a person waiting on an enrollment: the
+// server's own, if it gave one, else a default for the stage.
+func enrollMessage(stage controlpb.Stage, server string) string {
+	if server != "" {
+		return server
+	}
+	switch stage {
+	case controlpb.Stage_STAGE_REQUESTED:
+		return "가입 요청이 접수되었습니다."
+	case controlpb.Stage_STAGE_CREATING:
+		return "계정을 만드는 중입니다."
+	case controlpb.Stage_STAGE_AWAITING_APPROVAL:
+		return "관리자 승인을 기다리는 중입니다."
+	case controlpb.Stage_STAGE_READY:
+		return "계정이 준비되었습니다. 다시 로그인해 주세요."
+	case controlpb.Stage_STAGE_DENIED:
+		return "이 계정으로는 가입할 수 없습니다. 관리자에게 문의해 주세요."
+	case controlpb.Stage_STAGE_FAILED:
+		return "지금 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."
+	default:
+		return "요청을 처리하는 중입니다."
+	}
+}
+
+// handleSSOEnrollment reports where an onboarding stands, for the login page to
+// render as live progress. Unauthenticated — the id it is keyed by is the
+// capability, the same way the notice id is — and it returns only the stage, a
+// line to show, and the account once there is one, never the addresses or the
+// subject the enrollment also holds. It 404s without a control plane, since then
+// nothing is enrolled.
+func (s *Server) handleSSOEnrollment(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Controller == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "no id")
+		return
+	}
+	e, err := s.cfg.Controller.Enrollment.Get(r.Context(), &controlpb.GetEnrollmentRequest{Id: id})
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "could not read the enrollment")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"stage":   e.GetStage().String(),
+		"message": enrollMessage(e.GetStage(), e.GetMessage()),
+		"account": e.GetAccount(),
+	})
 }

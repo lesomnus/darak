@@ -101,11 +101,25 @@ export interface Branding {
  * and not something a link can choose.
  */
 export interface SSONotice {
-  /** '' when there is nothing to say, 'pending' or 'error'. */
+  /** '' when there is nothing to say; 'pending', 'error', or 'enrollment'. */
   kind: string
   message?: string
   /** The address the provider asserted, so the person can quote it. */
   address?: string
+  /** For 'enrollment': the id GET /api/sso/enrollment is followed by, and the
+   *  stage it started at, so the first paint is the real state. */
+  enrollment_id?: string
+  stage?: string
+}
+
+/** One reading of an in-progress onboarding (GET /api/sso/enrollment). */
+export interface EnrollmentProgress {
+  /** STAGE_REQUESTED | STAGE_CREATING | STAGE_AWAITING_APPROVAL | STAGE_READY |
+   *  STAGE_DENIED | STAGE_FAILED */
+  stage: string
+  message: string
+  /** The account name, once one exists (stage READY). */
+  account: string
 }
 
 /** One approved binding of a directory identity to an account. */

@@ -5,6 +5,7 @@ import {
   type Branding,
   type DiskReport,
   type DriftReport,
+  type EnrollmentProgress,
   type IdentityJournalEntry,
   type IdentityMapping,
   type IdentityView,
@@ -276,6 +277,11 @@ export const api = {
   // behind.
   ssoNotice: (id: string) =>
     request<SSONotice>(`/api/sso/notice?id=${encodeURIComponent(id)}`),
+
+  // Where an onboarding stands, for the login page to poll. The id came in the
+  // notice; no session.
+  ssoEnrollment: (id: string, signal?: AbortSignal) =>
+    request<EnrollmentProgress>(`/api/sso/enrollment?id=${encodeURIComponent(id)}`, { signal }),
 
   adminIdentities: (signal?: AbortSignal) =>
     request<IdentityView>('/api/admin/identities', { signal }),
