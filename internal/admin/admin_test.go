@@ -8,8 +8,63 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lesomnus/darak/internal/control"
+	"github.com/lesomnus/darak/internal/control/controlpb"
 	"github.com/lesomnus/darak/internal/helperpool"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+// fakeMembership is a control-plane MembershipServiceClient that records what it
+// was asked. Embedding the interface leaves List/Grade unimplemented — the tests
+// here do not call them, and a call would panic rather than pass silently.
+type fakeMembership struct {
+	controlpb.MembershipServiceClient
+	added  []string
+	erased []string
+}
+
+func (f *fakeMembership) Add(_ context.Context, in *controlpb.AddMembershipRequest, _ ...grpc.CallOption) (*controlpb.Membership, error) {
+	f.added = append(f.added, in.GetAccount()+"@"+in.GetGroup()+":"+in.GetRole().String())
+	return &controlpb.Membership{Account: in.GetAccount(), Group: in.GetGroup(), Role: in.GetRole()}, nil
+}
+
+func (f *fakeMembership) Erase(_ context.Context, in *controlpb.EraseMembershipRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	f.erased = append(f.erased, in.GetAccount()+"@"+in.GetGroup())
+	return &emptypb.Empty{}, nil
+}
+
+// With a control plane, a team change goes through it as a Membership Add/Erase,
+// and NOT out to `usersync member` on the host.
+func TestSetTeamMembershipThroughController(t *testing.T) {
+	r, res := teamFixture()
+	fake := &fakeMembership{}
+	a, err := New(Config{Root: "/srv/data", Runner: r, Resolver: res, Controller: &control.Controller{Membership: fake}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// alice is an admin and owns team-a; carol is a declared user.
+	if err := a.SetTeamMembership(ctx, "alice", "team-a", "carol", true); err != nil {
+		t.Fatalf("add through controller: %v", err)
+	}
+	if len(fake.added) != 1 || fake.added[0] != "carol@team-a:ROLE_MEMBER" {
+		t.Fatalf("controller Add = %v, want [carol@team-a:ROLE_MEMBER]", fake.added)
+	}
+	if err := a.SetTeamMembership(ctx, "alice", "team-a", "carol", false); err != nil {
+		t.Fatalf("remove through controller: %v", err)
+	}
+	if len(fake.erased) != 1 || fake.erased[0] != "carol@team-a" {
+		t.Fatalf("controller Erase = %v, want [carol@team-a]", fake.erased)
+	}
+	// The local usersync path must not have run.
+	for _, c := range r.calls {
+		if strings.HasPrefix(c, "usersync member") || c == "usersync apply" {
+			t.Errorf("control-plane path shelled out to %q; it must not", c)
+		}
+	}
+}
 
 // fakeRunner answers a fixed script of commands, and records what it was asked.
 type fakeRunner struct {

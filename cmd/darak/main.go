@@ -22,6 +22,7 @@ import (
 	"github.com/lesomnus/darak/internal/activity"
 	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/control"
 	"github.com/lesomnus/darak/internal/helperpool"
 	"github.com/lesomnus/darak/internal/identity"
 	"github.com/lesomnus/darak/internal/provision"
@@ -31,6 +32,8 @@ import (
 	"github.com/lesomnus/darak/internal/sso"
 	"github.com/lesomnus/darak/internal/ui"
 	"github.com/lesomnus/darak/internal/vfs"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -60,6 +63,7 @@ func realMain() error {
 		allowRemapped = flag.Bool("allow-remapped-uids", false, "start even though uids here are not the numbers on disk (see the error this suppresses)")
 		adminGroup    = flag.String("admin-group", admin.DefaultGroup, "POSIX group whose members may use the operator page; empty disables it")
 		anonymousUser = flag.String("anonymous-user", "", "OS account to serve unauthenticated web requests as, for public (roster `anonymous:`) folders; must exist in NSS, be in no group, and have no SMB credential. Empty disables anonymous access entirely")
+		controlAddr   = flag.String("control-addr", "", "gRPC address of the control plane — the service that edits the roster's source and lands the change (usersync then reconciles). When set, group changes go through it (and onboarding, once wired) instead of running usersync on this host; the transport is insecure, so use a loopback sidecar. Empty keeps the local `usersync member` path")
 		usageInterval = flag.Duration("usage-interval", 30*time.Minute, "how often per-user disk usage is remeasured")
 		activityDir   = flag.String("activity", "/var/lib/darak/activity", "where the who-changed-what record is kept; empty disables it")
 		activityKeep  = flag.Duration("activity-keep", activity.DefaultKeep, "how long to keep activity records (permanent retention is a backup's job)")
@@ -145,11 +149,25 @@ func realMain() error {
 	// The operator surface is optional and off by nothing but an empty flag:
 	// with no admin group there is no page, and every route behind it answers
 	// exactly as it does for a signed-in user who is not an admin.
+	// The control plane, if a deployment runs one. Opened lazily — grpc.NewClient
+	// does not connect here — so a control plane that is briefly down at startup
+	// does not stop darak from starting. Insecure transport, for a loopback
+	// sidecar; anything over a network would want credentials here.
+	var ctrl *control.Controller
+	if *controlAddr != "" {
+		ctrl, err = control.Dial(*controlAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return fmt.Errorf("control plane at %s: %w", *controlAddr, err)
+		}
+		defer ctrl.Close()
+	}
+
 	var adm *admin.Admin
 	if *adminGroup != "" {
 		adm, err = admin.New(admin.Config{
-			Group: *adminGroup,
-			Root:  *root,
+			Group:      *adminGroup,
+			Root:       *root,
+			Controller: ctrl,
 		})
 		if err != nil {
 			return err

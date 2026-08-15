@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/lesomnus/darak/internal/control/controlpb"
 )
 
 // Team membership, delegated.
@@ -175,6 +177,31 @@ func (a *Admin) SetTeamMembership(ctx context.Context, actor, team, user string,
 	if member {
 		op = "add"
 	}
+
+	// Through the control plane when one is configured: darak has decided the
+	// caller may, and the control plane edits the roster's source and lands the
+	// change (usersync then reconciles, downstream). Adding puts the account in
+	// as an ordinary writing member; a later re-grade to reader/owner is Grade,
+	// which the current team panel does not yet drive.
+	if a.cfg.Controller != nil {
+		var err error
+		if member {
+			_, err = a.cfg.Controller.Membership.Add(ctx, &controlpb.AddMembershipRequest{
+				Account: user, Group: team, Role: controlpb.Role_ROLE_MEMBER,
+			})
+		} else {
+			_, err = a.cfg.Controller.Membership.Erase(ctx, &controlpb.EraseMembershipRequest{
+				Account: user, Group: team,
+			})
+		}
+		if err != nil {
+			return fmt.Errorf("admin: %s %q %s team %q: %w", op, user, prep(member), team, err)
+		}
+		return nil
+	}
+
+	// No control plane: edit the roster here with `usersync member`. This needs a
+	// writable roster on the host and is the pre-control-plane path.
 	if _, err := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "member", op, user, team); err != nil {
 		return fmt.Errorf("admin: %s %q %s team %q: %w", op, user, prep(member), team, err)
 	}

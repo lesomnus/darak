@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lesomnus/darak/internal/control"
 	"github.com/lesomnus/darak/internal/helperpool"
 	"github.com/lesomnus/darak/internal/run"
 )
@@ -58,6 +59,14 @@ type Config struct {
 	UsersyncBin  string
 	PdbeditBin   string
 	SmbpasswdBin string
+
+	// Controller, when set, is the control plane a group change is made through:
+	// darak asks it to edit the roster's source and the change lands the pipeline
+	// (see internal/control). Nil falls back to running `usersync member` and
+	// `usersync apply` here, which needs a writable roster on this host — so a
+	// deployment whose roster is read-only (a ConfigMap, a checked-out repo) sets
+	// this and one that edits the file in place does not.
+	Controller *control.Controller
 }
 
 // Admin serves the operator surface.

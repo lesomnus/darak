@@ -51,6 +51,14 @@ if [[ -n ${DARAK_ANONYMOUS_USER:-} ]]; then
 		die "DARAK_ANONYMOUS_USER=$DARAK_ANONYMOUS_USER does not resolve to an account (use an existing one with no groups and no SMB, e.g. nobody)"
 	args+=(-anonymous-user "$DARAK_ANONYMOUS_USER")
 fi
+
+# The control plane: the gRPC address of the service that edits the roster's
+# source. When set, group changes (and onboarding, once wired) go through it
+# instead of running usersync on this host — which is what a read-only roster
+# (a ConfigMap) needs. A loopback sidecar; the transport is insecure.
+if [[ -n ${DARAK_CONTROL_ADDR:-} ]]; then
+	args+=(-control-addr "$DARAK_CONTROL_ADDR")
+fi
 if [[ -n ${DARAK_TLS_CERT:-} ]]; then
 	[[ -n ${DARAK_TLS_KEY:-} ]] || die "DARAK_TLS_CERT is set but DARAK_TLS_KEY is not"
 	[[ -r ${DARAK_TLS_CERT} ]] || die "cannot read $DARAK_TLS_CERT — is the TLS directory mounted?"
