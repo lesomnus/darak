@@ -1039,7 +1039,7 @@ const file_darak_control_v1_control_proto_rawDesc = "" +
 	"\x03Add\x12&.darak.control.v1.AddMembershipRequest\x1a\x1c.darak.control.v1.Membership\x12I\n" +
 	"\x05Erase\x12(.darak.control.v1.EraseMembershipRequest\x1a\x16.google.protobuf.Empty\x12[\n" +
 	"\x04List\x12(.darak.control.v1.ListMembershipsRequest\x1a).darak.control.v1.ListMembershipsResponse\x12O\n" +
-	"\x05Grade\x12(.darak.control.v1.GradeMembershipRequest\x1a\x1c.darak.control.v1.MembershipB@Z>github.com/lesomnus/darak/internal/control/controlpb;controlpbb\x06proto3"
+	"\x05Grade\x12(.darak.control.v1.GradeMembershipRequest\x1a\x1c.darak.control.v1.MembershipB7Z5github.com/lesomnus/darak/control/controlpb;controlpbb\x06proto3"
 
 var (
 	file_darak_control_v1_control_proto_rawDescOnce sync.Once

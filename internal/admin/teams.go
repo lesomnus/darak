@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lesomnus/darak/internal/control/controlpb"
+	"github.com/lesomnus/darak/control/controlpb"
 )
 
 // Team membership, delegated.

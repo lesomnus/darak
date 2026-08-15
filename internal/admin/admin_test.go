@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lesomnus/darak/control/controlpb"
 	"github.com/lesomnus/darak/internal/control"
-	"github.com/lesomnus/darak/internal/control/controlpb"
 	"github.com/lesomnus/darak/internal/helperpool"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"

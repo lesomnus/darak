@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lesomnus/darak/control/controlpb"
 	"github.com/lesomnus/darak/internal/auth"
 	"github.com/lesomnus/darak/internal/control"
-	"github.com/lesomnus/darak/internal/control/controlpb"
 	"github.com/lesomnus/darak/internal/identity"
 	"github.com/lesomnus/darak/internal/provision"
 	"github.com/lesomnus/darak/internal/sso"

@@ -16,7 +16,7 @@ package control
 import (
 	"google.golang.org/grpc"
 
-	"github.com/lesomnus/darak/internal/control/controlpb"
+	"github.com/lesomnus/darak/control/controlpb"
 )
 
 // Controller is the set of resource clients darak calls the control plane

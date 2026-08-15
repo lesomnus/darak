@@ -27,7 +27,7 @@ package darak.control.v1;
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/lesomnus/darak/internal/control/controlpb;controlpb";
+option go_package = "github.com/lesomnus/darak/control/controlpb;controlpb";
 
 // Enrollment is an in-progress onboarding of an identity that signed in through
 // SSO and resolves to no account yet. darak Adds one on that first sign-in and
