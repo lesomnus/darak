@@ -326,13 +326,13 @@ func realMain() error {
 		TrustEmail:     *ssoTrustEmail,
 		Controller:     ctrl,
 		Provision:      provisioner,
-		ProvisionConfig: func() provision.Status {
-			if watcher == nil {
-				return provision.Status{}
-			}
-			return watcher.Status()
-		},
-		SessionTTL:    *sessionTTL,
+		// Only report a provisioning status when there is one. Left as a non-nil
+		// closure that answers with the zero Status when disabled, the operator
+		// page reads "enabled" and then renders a null rules list — so a
+		// deployment with provisioning off (no watcher) leaves this nil, and
+		// handleProvisioning answers `enabled: false`.
+		ProvisionConfig: provisionStatus(watcher),
+		SessionTTL:      *sessionTTL,
 		SecureCookies: *secureCookies,
 		MaxUpload:     *maxUpload,
 		AnonymousUser: *anonymousUser,
@@ -466,4 +466,15 @@ func measureUsage(ctx context.Context, adm *admin.Admin, every time.Duration) {
 		case <-time.After(every):
 		}
 	}
+}
+
+// provisionStatus returns the operator page's provisioning-status source, or nil
+// when provisioning is not configured. nil is what makes handleProvisioning
+// answer `enabled: false`; a non-nil closure that returns the zero Status would
+// read as "enabled" with a null rules list, which crashes the page.
+func provisionStatus(w *provision.Watcher) func() provision.Status {
+	if w == nil {
+		return nil
+	}
+	return w.Status
 }
