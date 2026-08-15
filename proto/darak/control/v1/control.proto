@@ -3,21 +3,29 @@ syntax = "proto3";
 // darak's control plane, as resources.
 //
 // This is the seam between darak — which decides WHO may do a thing (an admin,
-// a team's owner) — and whatever actually owns the roster: a service that
-// creates accounts and edits group membership by opening a change against the
-// version-controlled source. darak is the gate; the server behind this contract
-// is the sink that "just does what it is told". There is no database here and
-// darak keeps none: the roster stays the single source of truth, and this API
-// only asks the thing that owns it to change it.
+// a team's owner) — and the service that owns the roster's SOURCE: it edits the
+// version-controlled roster (a commit, a pull request) when told to. darak is
+// the gate; the server behind this contract is the sink that "just does what it
+// is told". There is no database here and darak keeps none: the roster stays the
+// single source of truth, and this API only asks the thing that owns it to
+// change it.
+//
+// usersync is unchanged and downstream of all of this. A method here starts a
+// roster-update pipeline — edit the source, land the change — and usersync then
+// reconciles the running system to the new roster, which is what makes an
+// account actually appear. So Enrollment.Add BEGINS that pipeline, and an
+// enrollment's Stage is where the pipeline has got to.
 //
 // The shape follows payday (github.com/lesomnus/payday): a resource per concept,
-// each with the standard method vocabulary — Add / Get / List / Erase — rather
-// than a verb per operation. A membership is a resource, so joining a group is
-// Add and leaving is Erase; an onboarding is a resource, so requesting one is
-// Add and asking how far it got is Get.
+// each with the standard method vocabulary — Add / Get / List / Watch / Erase —
+// rather than a verb per operation. A membership is a resource, so joining a
+// group is Add and leaving is Erase; an onboarding is a resource, so requesting
+// one is Add, asking how far it got is Get, and following it as the pipeline
+// advances is Watch.
 package darak.control.v1;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/lesomnus/darak/internal/control/controlpb;controlpb";
 
@@ -49,6 +57,11 @@ message Enrollment {
   // A human-readable line for the pending person, from the server. Optional;
   // darak supplies a default per stage when it is empty.
   string message = 8;
+
+  // When this enrollment last changed. It is the version a Watch orders by: a
+  // watch sends state, and two updates about one enrollment can arrive out of
+  // order, so a client keeps the newer and drops an older one it holds already.
+  google.protobuf.Timestamp updated_at = 9;
 }
 
 // Stage is where an enrollment stands. It only moves forward, except that a
@@ -97,13 +110,29 @@ message EraseEnrollmentRequest {
   string id = 1;
 }
 
-// EnrollmentService is the onboarding lifecycle. darak calls Add on first
-// sign-in and Get to report progress; an operator page reads List and calls
-// Erase to discard a request.
+message WatchEnrollmentsRequest {
+  // Watch one enrollment by id — a pending person following their own onboarding
+  // as the pipeline advances — or every enrollment in a stage (AWAITING_APPROVAL
+  // for the operator's live queue). Setting neither watches them all.
+  string id = 1;
+  Stage stage = 2;
+}
+
+// EnrollmentService is the onboarding lifecycle. darak calls Add on an unmapped
+// identity's first sign-in (which starts the roster-update pipeline) and follows
+// it with Watch, so the interface shows live progress and completes the sign-in
+// the moment the stage reaches READY. Get is the one-shot read; an operator page
+// reads List and calls Erase to discard a request.
 service EnrollmentService {
   rpc Add(AddEnrollmentRequest) returns (Enrollment);
   rpc Get(GetEnrollmentRequest) returns (Enrollment);
   rpc List(ListEnrollmentsRequest) returns (ListEnrollmentsResponse);
+  // Watch streams an enrollment's state each time it changes, for as long as the
+  // stream is open — the pipeline advancing REQUESTED → CREATING → … → READY
+  // arrives as a message per transition. A client replaces what it holds by id,
+  // ordering by updated_at. It ends the stream once it sees a terminal stage
+  // (READY, DENIED).
+  rpc Watch(WatchEnrollmentsRequest) returns (stream Enrollment);
   rpc Erase(EraseEnrollmentRequest) returns (google.protobuf.Empty);
 }
 

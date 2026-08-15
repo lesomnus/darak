@@ -7,18 +7,25 @@
 // darak's control plane, as resources.
 //
 // This is the seam between darak — which decides WHO may do a thing (an admin,
-// a team's owner) — and whatever actually owns the roster: a service that
-// creates accounts and edits group membership by opening a change against the
-// version-controlled source. darak is the gate; the server behind this contract
-// is the sink that "just does what it is told". There is no database here and
-// darak keeps none: the roster stays the single source of truth, and this API
-// only asks the thing that owns it to change it.
+// a team's owner) — and the service that owns the roster's SOURCE: it edits the
+// version-controlled roster (a commit, a pull request) when told to. darak is
+// the gate; the server behind this contract is the sink that "just does what it
+// is told". There is no database here and darak keeps none: the roster stays the
+// single source of truth, and this API only asks the thing that owns it to
+// change it.
+//
+// usersync is unchanged and downstream of all of this. A method here starts a
+// roster-update pipeline — edit the source, land the change — and usersync then
+// reconciles the running system to the new roster, which is what makes an
+// account actually appear. So Enrollment.Add BEGINS that pipeline, and an
+// enrollment's Stage is where the pipeline has got to.
 //
 // The shape follows payday (github.com/lesomnus/payday): a resource per concept,
-// each with the standard method vocabulary — Add / Get / List / Erase — rather
-// than a verb per operation. A membership is a resource, so joining a group is
-// Add and leaving is Erase; an onboarding is a resource, so requesting one is
-// Add and asking how far it got is Get.
+// each with the standard method vocabulary — Add / Get / List / Watch / Erase —
+// rather than a verb per operation. A membership is a resource, so joining a
+// group is Add and leaving is Erase; an onboarding is a resource, so requesting
+// one is Add, asking how far it got is Get, and following it as the pipeline
+// advances is Watch.
 
 package controlpb
 
@@ -39,6 +46,7 @@ const (
 	EnrollmentService_Add_FullMethodName   = "/darak.control.v1.EnrollmentService/Add"
 	EnrollmentService_Get_FullMethodName   = "/darak.control.v1.EnrollmentService/Get"
 	EnrollmentService_List_FullMethodName  = "/darak.control.v1.EnrollmentService/List"
+	EnrollmentService_Watch_FullMethodName = "/darak.control.v1.EnrollmentService/Watch"
 	EnrollmentService_Erase_FullMethodName = "/darak.control.v1.EnrollmentService/Erase"
 )
 
@@ -46,13 +54,21 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// EnrollmentService is the onboarding lifecycle. darak calls Add on first
-// sign-in and Get to report progress; an operator page reads List and calls
-// Erase to discard a request.
+// EnrollmentService is the onboarding lifecycle. darak calls Add on an unmapped
+// identity's first sign-in (which starts the roster-update pipeline) and follows
+// it with Watch, so the interface shows live progress and completes the sign-in
+// the moment the stage reaches READY. Get is the one-shot read; an operator page
+// reads List and calls Erase to discard a request.
 type EnrollmentServiceClient interface {
 	Add(ctx context.Context, in *AddEnrollmentRequest, opts ...grpc.CallOption) (*Enrollment, error)
 	Get(ctx context.Context, in *GetEnrollmentRequest, opts ...grpc.CallOption) (*Enrollment, error)
 	List(ctx context.Context, in *ListEnrollmentsRequest, opts ...grpc.CallOption) (*ListEnrollmentsResponse, error)
+	// Watch streams an enrollment's state each time it changes, for as long as the
+	// stream is open — the pipeline advancing REQUESTED → CREATING → … → READY
+	// arrives as a message per transition. A client replaces what it holds by id,
+	// ordering by updated_at. It ends the stream once it sees a terminal stage
+	// (READY, DENIED).
+	Watch(ctx context.Context, in *WatchEnrollmentsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Enrollment], error)
 	Erase(ctx context.Context, in *EraseEnrollmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -94,6 +110,25 @@ func (c *enrollmentServiceClient) List(ctx context.Context, in *ListEnrollmentsR
 	return out, nil
 }
 
+func (c *enrollmentServiceClient) Watch(ctx context.Context, in *WatchEnrollmentsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Enrollment], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &EnrollmentService_ServiceDesc.Streams[0], EnrollmentService_Watch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchEnrollmentsRequest, Enrollment]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type EnrollmentService_WatchClient = grpc.ServerStreamingClient[Enrollment]
+
 func (c *enrollmentServiceClient) Erase(ctx context.Context, in *EraseEnrollmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -108,13 +143,21 @@ func (c *enrollmentServiceClient) Erase(ctx context.Context, in *EraseEnrollment
 // All implementations must embed UnimplementedEnrollmentServiceServer
 // for forward compatibility.
 //
-// EnrollmentService is the onboarding lifecycle. darak calls Add on first
-// sign-in and Get to report progress; an operator page reads List and calls
-// Erase to discard a request.
+// EnrollmentService is the onboarding lifecycle. darak calls Add on an unmapped
+// identity's first sign-in (which starts the roster-update pipeline) and follows
+// it with Watch, so the interface shows live progress and completes the sign-in
+// the moment the stage reaches READY. Get is the one-shot read; an operator page
+// reads List and calls Erase to discard a request.
 type EnrollmentServiceServer interface {
 	Add(context.Context, *AddEnrollmentRequest) (*Enrollment, error)
 	Get(context.Context, *GetEnrollmentRequest) (*Enrollment, error)
 	List(context.Context, *ListEnrollmentsRequest) (*ListEnrollmentsResponse, error)
+	// Watch streams an enrollment's state each time it changes, for as long as the
+	// stream is open — the pipeline advancing REQUESTED → CREATING → … → READY
+	// arrives as a message per transition. A client replaces what it holds by id,
+	// ordering by updated_at. It ends the stream once it sees a terminal stage
+	// (READY, DENIED).
+	Watch(*WatchEnrollmentsRequest, grpc.ServerStreamingServer[Enrollment]) error
 	Erase(context.Context, *EraseEnrollmentRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedEnrollmentServiceServer()
 }
@@ -134,6 +177,9 @@ func (UnimplementedEnrollmentServiceServer) Get(context.Context, *GetEnrollmentR
 }
 func (UnimplementedEnrollmentServiceServer) List(context.Context, *ListEnrollmentsRequest) (*ListEnrollmentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedEnrollmentServiceServer) Watch(*WatchEnrollmentsRequest, grpc.ServerStreamingServer[Enrollment]) error {
+	return status.Error(codes.Unimplemented, "method Watch not implemented")
 }
 func (UnimplementedEnrollmentServiceServer) Erase(context.Context, *EraseEnrollmentRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Erase not implemented")
@@ -213,6 +259,17 @@ func _EnrollmentService_List_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _EnrollmentService_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchEnrollmentsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(EnrollmentServiceServer).Watch(m, &grpc.GenericServerStream[WatchEnrollmentsRequest, Enrollment]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type EnrollmentService_WatchServer = grpc.ServerStreamingServer[Enrollment]
+
 func _EnrollmentService_Erase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(EraseEnrollmentRequest)
 	if err := dec(in); err != nil {
@@ -255,7 +312,13 @@ var EnrollmentService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _EnrollmentService_Erase_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Watch",
+			Handler:       _EnrollmentService_Watch_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "darak/control/v1/control.proto",
 }
 
