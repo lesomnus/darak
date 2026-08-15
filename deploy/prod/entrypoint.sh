@@ -38,6 +38,19 @@ args=(
 	-shares "$STATE_DIR/shares.json"
 	-admin-group "$ADMIN_GROUP"
 )
+
+# Anonymous (public-folder) access. When set, an unauthenticated web request is
+# served as this OS account instead of refused, so the folders the roster marks
+# `anonymous:` can be read (and, where the mode allows, written) without signing
+# in. The account MUST exist, belong to no group, and have no SMB credential:
+# the kernel then confines it to world-accessible folders and it can never mount
+# over SMB. `nobody` satisfies all three on this image. Unset (the default)
+# disables anonymous access entirely.
+if [[ -n ${DARAK_ANONYMOUS_USER:-} ]]; then
+	getent passwd "$DARAK_ANONYMOUS_USER" >/dev/null ||
+		die "DARAK_ANONYMOUS_USER=$DARAK_ANONYMOUS_USER does not resolve to an account (use an existing one with no groups and no SMB, e.g. nobody)"
+	args+=(-anonymous-user "$DARAK_ANONYMOUS_USER")
+fi
 if [[ -n ${DARAK_TLS_CERT:-} ]]; then
 	[[ -n ${DARAK_TLS_KEY:-} ]] || die "DARAK_TLS_CERT is set but DARAK_TLS_KEY is not"
 	[[ -r ${DARAK_TLS_CERT} ]] || die "cannot read $DARAK_TLS_CERT — is the TLS directory mounted?"

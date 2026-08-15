@@ -260,6 +260,15 @@ cat <<EOF
 
 EOF
 
+# Anonymous (public-folder) access, off unless DARAK_ANONYMOUS_USER names an
+# account with no groups and no SMB (e.g. nobody); see the prod entrypoint.
+anon_args=()
+if [[ -n ${DARAK_ANONYMOUS_USER:-} ]]; then
+	getent passwd "$DARAK_ANONYMOUS_USER" >/dev/null ||
+		die "DARAK_ANONYMOUS_USER=$DARAK_ANONYMOUS_USER does not resolve to an account"
+	anon_args+=(-anonymous-user "$DARAK_ANONYMOUS_USER")
+fi
+
 log "darak"
 exec /usr/local/bin/darak \
 	-root "$DATA_ROOT" \
@@ -267,4 +276,5 @@ exec /usr/local/bin/darak \
 	-shares "$STATE_DIR/shares.json" \
 	-admin-group "$ADMIN_GROUP" \
 	-secure-cookies=false \
+	"${anon_args[@]}" \
 	"$@"
