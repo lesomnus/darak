@@ -334,6 +334,14 @@ export interface TeamsView {
   users: string[]
 }
 
+/** One staged membership change: add user to team, or remove them. The page
+ *  accumulates these and applies them together. */
+export interface TeamChange {
+  team: string
+  user: string
+  member: boolean
+}
+
 /** One recorded change (internal/activity.Event). */
 export interface ActivityEvent {
   at: string

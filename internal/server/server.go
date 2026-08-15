@@ -137,11 +137,12 @@ const defaultMaxUpload = 64 << 30 // 64 GiB
 
 // Server serves the HTTP API.
 type Server struct {
-	cfg      Config
-	sessions *Sessions
-	flows    *sso.Flows
-	notices  *notices
-	enroll   *enrollTracker
+	cfg       Config
+	sessions  *Sessions
+	flows     *sso.Flows
+	notices   *notices
+	enroll    *enrollTracker
+	reconcile *reconcileTracker
 }
 
 func New(cfg Config) (*Server, error) {
@@ -164,11 +165,12 @@ func New(cfg Config) (*Server, error) {
 		cfg.Brand.Name = DefaultBrandName
 	}
 	return &Server{
-		cfg:      cfg,
-		sessions: NewSessions(cfg.SessionTTL),
-		flows:    sso.NewFlows(),
-		notices:  newNotices(),
-		enroll:   newEnrollTracker(),
+		cfg:       cfg,
+		sessions:  NewSessions(cfg.SessionTTL),
+		flows:     sso.NewFlows(),
+		notices:   newNotices(),
+		enroll:    newEnrollTracker(),
+		reconcile: newReconcileTracker(),
 	}, nil
 }
 
@@ -249,6 +251,11 @@ func (s *Server) Handler() http.Handler {
 	// per-team inside the handler rather than by adminOnly.
 	mux.HandleFunc("GET /api/teams", s.authed(s.handleTeams))
 	mux.HandleFunc("GET /api/teams/whoami", s.authed(s.handleTeamWhoami))
+	// More specific than the /api/teams/ prefix below, so these win for their
+	// paths: apply lands a batch of changes, status streams the reconcile it
+	// started. status is a cookie-authed SSE stream (EventSource carries it).
+	mux.HandleFunc("POST /api/teams/apply", s.authed(s.handleTeamsApply))
+	mux.HandleFunc("GET /api/teams/status", s.authed(s.handleTeamsStatus))
 	mux.HandleFunc("POST /api/teams/", s.authed(s.handleTeamMembers))
 
 	// The public side takes no session: the URL is the credential.

@@ -16,6 +16,7 @@ import {
   type SSONotice,
   type SearchDone,
   type SearchHit,
+  type TeamChange,
   type TeamsView,
   type TeamWhoami,
   type ShareLink,
@@ -313,5 +314,14 @@ export const api = {
     request<void>(`/api/teams/${encodeURIComponent(team)}/members`, {
       method: 'POST',
       body: { user, member },
+    }),
+
+  // Land several staged membership changes as one commit. The returned id is
+  // followed over /api/teams/status (an EventSource) to watch the reconcile it
+  // starts — the same shape onboarding uses.
+  applyTeamChanges: (changes: TeamChange[]) =>
+    request<{ id: string }>('/api/teams/apply', {
+      method: 'POST',
+      body: { changes },
     }),
 }

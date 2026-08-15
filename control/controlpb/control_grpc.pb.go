@@ -327,6 +327,7 @@ const (
 	MembershipService_Erase_FullMethodName = "/darak.control.v1.MembershipService/Erase"
 	MembershipService_List_FullMethodName  = "/darak.control.v1.MembershipService/List"
 	MembershipService_Grade_FullMethodName = "/darak.control.v1.MembershipService/Grade"
+	MembershipService_Batch_FullMethodName = "/darak.control.v1.MembershipService/Batch"
 )
 
 // MembershipServiceClient is the client API for MembershipService service.
@@ -347,6 +348,14 @@ type MembershipServiceClient interface {
 	// let any field be set. There is no Patch or Apply on this API for that
 	// reason — every mutation that means something is its own method.
 	Grade(ctx context.Context, in *GradeMembershipRequest, opts ...grpc.CallOption) (*Membership, error)
+	// Batch lands a set of Add/Erase changes as ONE revision of the roster. It is
+	// not a Patch smuggled back in: every element is still a typed behavior. It
+	// exists because the roster's source is version-controlled and reconciled
+	// downstream, so committing N edits separately means N commits and N syncs —
+	// an operator staging several membership changes on a page and confirming them
+	// wants one commit, one convergence, one thing to watch. Adds already-in and
+	// removes already-out fold away; if nothing is left, no commit is made.
+	Batch(ctx context.Context, in *BatchMembershipsRequest, opts ...grpc.CallOption) (*BatchMembershipsResponse, error)
 }
 
 type membershipServiceClient struct {
@@ -397,6 +406,16 @@ func (c *membershipServiceClient) Grade(ctx context.Context, in *GradeMembership
 	return out, nil
 }
 
+func (c *membershipServiceClient) Batch(ctx context.Context, in *BatchMembershipsRequest, opts ...grpc.CallOption) (*BatchMembershipsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchMembershipsResponse)
+	err := c.cc.Invoke(ctx, MembershipService_Batch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MembershipServiceServer is the server API for MembershipService service.
 // All implementations must embed UnimplementedMembershipServiceServer
 // for forward compatibility.
@@ -415,6 +434,14 @@ type MembershipServiceServer interface {
 	// let any field be set. There is no Patch or Apply on this API for that
 	// reason — every mutation that means something is its own method.
 	Grade(context.Context, *GradeMembershipRequest) (*Membership, error)
+	// Batch lands a set of Add/Erase changes as ONE revision of the roster. It is
+	// not a Patch smuggled back in: every element is still a typed behavior. It
+	// exists because the roster's source is version-controlled and reconciled
+	// downstream, so committing N edits separately means N commits and N syncs —
+	// an operator staging several membership changes on a page and confirming them
+	// wants one commit, one convergence, one thing to watch. Adds already-in and
+	// removes already-out fold away; if nothing is left, no commit is made.
+	Batch(context.Context, *BatchMembershipsRequest) (*BatchMembershipsResponse, error)
 	mustEmbedUnimplementedMembershipServiceServer()
 }
 
@@ -436,6 +463,9 @@ func (UnimplementedMembershipServiceServer) List(context.Context, *ListMembershi
 }
 func (UnimplementedMembershipServiceServer) Grade(context.Context, *GradeMembershipRequest) (*Membership, error) {
 	return nil, status.Error(codes.Unimplemented, "method Grade not implemented")
+}
+func (UnimplementedMembershipServiceServer) Batch(context.Context, *BatchMembershipsRequest) (*BatchMembershipsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Batch not implemented")
 }
 func (UnimplementedMembershipServiceServer) mustEmbedUnimplementedMembershipServiceServer() {}
 func (UnimplementedMembershipServiceServer) testEmbeddedByValue()                           {}
@@ -530,6 +560,24 @@ func _MembershipService_Grade_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MembershipService_Batch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchMembershipsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MembershipServiceServer).Batch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MembershipService_Batch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MembershipServiceServer).Batch(ctx, req.(*BatchMembershipsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MembershipService_ServiceDesc is the grpc.ServiceDesc for MembershipService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -552,6 +600,10 @@ var MembershipService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Grade",
 			Handler:    _MembershipService_Grade_Handler,
+		},
+		{
+			MethodName: "Batch",
+			Handler:    _MembershipService_Batch_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -539,6 +539,9 @@ func (s *Server) queueIdentity(w http.ResponseWriter, r *http.Request, ident *ss
 // caller can grow, and nothing else would ever prune a request that stopped
 // being retried.
 func (s *Server) SweepSSO() {
+	// The reconcile tracker backs the team page's batch-apply, which does not need
+	// SSO, so sweep it before the SSO guard.
+	s.reconcile.sweep(time.Now())
 	if s.cfg.SSO == nil {
 		return
 	}

@@ -1607,6 +1607,46 @@ dialog menu {
   padding: 0.3rem 0.4rem;
 }
 
+/* Staged, not yet applied: an add is tinted with the accent, a removal with the
+   error colour and struck through, so the pending set is legible before the
+   operator confirms it. */
+.members li[data-staged='add'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.members li[data-staged='remove'] {
+  border-color: var(--error);
+  background: var(--error-soft);
+}
+.members li .struck {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+/* The confirm bar and the reconcile status card. */
+.team-apply {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.team-apply p {
+  margin: 0;
+}
+.team-apply .actions {
+  display: flex;
+  gap: 0.4rem;
+}
+.team-status {
+  margin-top: 0.6rem;
+}
+
 /* --- activity --- */
 .filters {
   display: flex;

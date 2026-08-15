@@ -190,6 +190,32 @@ message ListMembershipsResponse {
   repeated Membership memberships = 1;
 }
 
+// MembershipChange is one edit in a batch: an Add (join) or an Erase (leave),
+// named as a behavior rather than a field write. Its op is the same choice the
+// single-membership methods make — which is why a batch is a list of THESE and
+// not a Patch: each element still says what it means.
+message MembershipChange {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    OP_ADD = 1;   // join the group (as ROLE_MEMBER)
+    OP_ERASE = 2; // leave it
+  }
+  Op op = 1;
+  string account = 2;
+  string group = 3;
+  Role role = 4; // for OP_ADD; defaults to ROLE_MEMBER
+}
+
+message BatchMembershipsRequest {
+  repeated MembershipChange changes = 1;
+}
+
+message BatchMembershipsResponse {
+  // How many of the changes were not no-ops — a request that adds someone
+  // already in a group and removes someone already out lands zero.
+  int32 applied = 1;
+}
+
 // MembershipService is what the operator page's "add to group" and "remove from
 // group" call. darak has already decided the caller may manage the group; the
 // server behind this only records the change.
@@ -204,4 +230,12 @@ service MembershipService {
   // let any field be set. There is no Patch or Apply on this API for that
   // reason — every mutation that means something is its own method.
   rpc Grade(GradeMembershipRequest) returns (Membership);
+  // Batch lands a set of Add/Erase changes as ONE revision of the roster. It is
+  // not a Patch smuggled back in: every element is still a typed behavior. It
+  // exists because the roster's source is version-controlled and reconciled
+  // downstream, so committing N edits separately means N commits and N syncs —
+  // an operator staging several membership changes on a page and confirming them
+  // wants one commit, one convergence, one thing to watch. Adds already-in and
+  // removes already-out fold away; if nothing is left, no commit is made.
+  rpc Batch(BatchMembershipsRequest) returns (BatchMembershipsResponse);
 }

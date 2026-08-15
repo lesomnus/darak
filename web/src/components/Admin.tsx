@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { formatDate, formatSize } from '../lib/format'
 import { Icon } from './Icon'
@@ -10,7 +10,9 @@ import type {
   DiskReport,
   DriftReport,
   Inventory,
+  TeamChange,
   TeamsView,
+  TeamView,
 } from '../types'
 
 /**
@@ -422,16 +424,31 @@ function explainDrift(code: string): string {
   }
 }
 
+// The steps an apply passes through, for the status stepper. "syncing" is not a
+// third step — it keeps "committed" active while the reconcile runs.
+const APPLY_STEPS: { key: string; label: string }[] = [
+  { key: 'committed', label: '기록됨' },
+  { key: 'applied', label: '반영됨' },
+]
+
+const changeKey = (team: string, user: string) => `${team} ${user}`
+
 /**
- * Team membership, editable by whoever may.
+ * Team membership, staged and applied together.
  *
  * Driven by /api/teams, which returns only the teams the caller may change --
  * all of them for an admin, theirs for an owner, none for anyone else. That is
  * also why it does not read the inventory: an owner is not an administrator and
  * cannot fetch it.
  *
- * The controls being drawn is a rendering decision. The server re-checks on
- * every request, so a browser that lies to itself gains nothing.
+ * Changes are collected in the page, not sent one at a time: each membership
+ * edit is a commit to a version-controlled roster that something downstream
+ * reconciles, so one-at-a-time is one-commit-and-one-wait each. The operator
+ * marks who is in and who is out, sees the pending set, and confirms it once ---
+ * that lands as a single revision, and the status card follows the reconcile it
+ * starts (committed -> syncing -> applied) instead of leaving a spinner and a
+ * guess. The controls being drawn is a rendering decision; the server re-checks
+ * every change on apply, so a browser that lies to itself gains nothing.
  */
 function Teams({
   view,
@@ -442,21 +459,82 @@ function Teams({
   onChanged: () => void
   onError: (message: string) => void
 }) {
-  const [busy, setBusy] = useState('')
+  // Staged edits, keyed by team+user, each the DESIRED membership. Only entries
+  // that differ from what the server returned are kept, so toggling back to the
+  // original state drops the entry and a no-op apply is impossible to submit.
+  const [pending, setPending] = useState<Record<string, boolean>>({})
+  const [applying, setApplying] = useState(false)
+  const [status, setStatus] = useState<{ stage: string; message: string } | null>(null)
+  const esRef = useRef<EventSource | null>(null)
+
+  useEffect(() => () => esRef.current?.close(), [])
 
   if (!view?.teams.length) return null
 
-  async function setMember(team: string, user: string, member: boolean) {
-    setBusy(`${team}:${user}`)
+  const isMember = (g: TeamView, user: string) => {
+    const k = changeKey(g.name, user)
+    return k in pending ? pending[k] : g.members.includes(user)
+  }
+
+  // Toggle towards `member`. Landing back on the original state removes the entry
+  // rather than storing a no-op.
+  const toggle = (team: string, user: string, member: boolean, original: boolean) => {
+    setPending((prev) => {
+      const next = { ...prev }
+      const k = changeKey(team, user)
+      if (member === original) delete next[k]
+      else next[k] = member
+      return next
+    })
+  }
+
+  const changes: TeamChange[] = Object.entries(pending).map(([k, member]) => {
+    const sep = k.indexOf(' ')
+    return { team: k.slice(0, sep), user: k.slice(sep + 1), member }
+  })
+
+  const discard = () => setPending({})
+
+  async function apply() {
+    setApplying(true)
+    setStatus({ stage: 'committed', message: '변경을 보내는 중입니다…' })
     try {
-      await api.setTeamMember(team, user, member)
-      onChanged()
+      const { id } = await api.applyTeamChanges(changes)
+      // Server-Sent Events, like onboarding: the server emits a stage as the
+      // reconcile it committed advances, and closes at "applied". EventSource
+      // reconnects on its own, and the id stays valid across a reconnect.
+      esRef.current?.close()
+      const es = new EventSource(`/api/teams/status?id=${encodeURIComponent(id)}`)
+      esRef.current = es
+      es.onmessage = (ev) => {
+        try {
+          const p = JSON.parse(ev.data) as { stage: string; message: string }
+          setStatus(p)
+          if (p.stage === 'applied') {
+            es.close()
+            setPending({})
+            setApplying(false)
+            onChanged()
+          }
+        } catch {
+          // A malformed frame is skipped; the next replaces the state anyway.
+        }
+      }
+      es.onerror = () => {
+        // A drop is not a failure: the stream ends at the server's deadline and
+        // EventSource retries. The change is committed regardless, so the button
+        // is freed and the card keeps showing the last stage.
+        setApplying(false)
+      }
     } catch (e) {
-      onError(e instanceof Error ? e.message : '변경하지 못했습니다.')
-    } finally {
-      setBusy('')
+      onError(e instanceof Error ? e.message : '적용하지 못했습니다.')
+      setStatus(null)
+      setApplying(false)
     }
   }
+
+  const active = APPLY_STEPS.findIndex((s) => s.key === (status?.stage ?? ''))
+  const stepActive = status?.stage === 'applied' ? APPLY_STEPS.length : Math.max(active, 0)
 
   return (
     <section>
@@ -464,7 +542,12 @@ function Teams({
         <Icon name="team" size={18} />팀
       </h2>
       {view.teams.map((g) => {
-        const outside = view.users.filter((u) => !g.members.includes(u))
+        const outside = view.users.filter((u) => !isMember(g, u))
+        // Everyone who is a member now OR is currently in the group but staged for
+        // removal, so a removal shows struck-through with a way back rather than
+        // just vanishing.
+        const shown = view.users.filter((u) => g.members.includes(u) || isMember(g, u))
+        shown.sort()
         return (
           <div className="team" key={g.name}>
             <h3>
@@ -476,36 +559,75 @@ function Teams({
               <p className="muted small">관리자: {g.owners.join(', ')}</p>
             )}
             <ul className="members">
-              {g.members.length === 0 && <li className="muted">비어 있음</li>}
-              {g.members.map((m) => (
-                <li key={m}>
-                  {m}
-                  <button
-                    type="button"
-                    className="ghost tiny"
-                    disabled={busy === `${g.name}:${m}`}
-                    title={`${m}을(를) ${g.name}에서 제외`}
-                    onClick={() => void setMember(g.name, m, false)}
-                  >
-                    제외
-                  </button>
-                </li>
-              ))}
+              {shown.length === 0 && <li className="muted">비어 있음</li>}
+              {shown.map((m) => {
+                const original = g.members.includes(m)
+                const member = isMember(g, m)
+                const staged = member !== original
+                return (
+                  <li key={m} data-staged={staged ? (member ? 'add' : 'remove') : undefined}>
+                    <span className={staged && !member ? 'struck' : undefined}>{m}</span>
+                    <button
+                      type="button"
+                      className="ghost tiny"
+                      title={
+                        member ? `${m}을(를) ${g.name}에서 제외` : `${m} 제외 되돌리기`
+                      }
+                      onClick={() => toggle(g.name, m, !member, original)}
+                    >
+                      {member ? '제외' : '되돌리기'}
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
             {outside.length > 0 && (
               <AddMember
                 team={g.name}
                 candidates={outside}
-                busy={busy.startsWith(`${g.name}:`)}
-                onAdd={(user) => void setMember(g.name, user, true)}
+                onAdd={(user) => toggle(g.name, user, true, g.members.includes(user))}
               />
             )}
           </div>
         )
       })}
+
+      {changes.length > 0 && (
+        <div className="team-apply">
+          <p className="small">
+            <strong>{changes.length}건</strong>의 변경이 대기 중입니다.
+          </p>
+          <div className="actions">
+            <button type="button" onClick={() => void apply()} disabled={applying}>
+              적용
+            </button>
+            <button type="button" className="ghost" onClick={discard} disabled={applying}>
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {status && (
+        <div className="team-status notice" role="status" aria-live="polite">
+          <p>{status.message}</p>
+          <ol className="enroll-steps">
+            {APPLY_STEPS.map((s, i) => (
+              <li
+                key={s.key}
+                data-state={i < stepActive ? 'done' : i === stepActive ? 'active' : 'todo'}
+              >
+                {s.label}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
       <p className="muted small">
-        팀 소속은 <code>roster.yaml</code>에 기록되고 바로 반영됩니다. 계정 생성·삭제와 uid는
-        여전히 손으로 고칩니다.
+        팀 소속은 <code>roster.yaml</code>에 기록되고, 적용하면 하나의 커밋으로 반영됩니다.
+        동기화까지는 잠시 걸릴 수 있으며 위에서 진행 상태를 볼 수 있습니다. 계정 생성·삭제와
+        uid는 여전히 손으로 고칩니다.
       </p>
     </section>
   )
@@ -514,12 +636,10 @@ function Teams({
 function AddMember({
   team,
   candidates,
-  busy,
   onAdd,
 }: {
   team: string
   candidates: string[]
-  busy: boolean
   onAdd: (user: string) => void
 }) {
   const [pick, setPick] = useState('')
@@ -540,7 +660,7 @@ function AddMember({
           </option>
         ))}
       </select>
-      <button type="submit" className="ghost tiny" disabled={busy || !pick}>
+      <button type="submit" className="ghost tiny" disabled={!pick}>
         추가
       </button>
     </form>

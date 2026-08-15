@@ -223,6 +223,155 @@ func prep(member bool) string {
 	return "from"
 }
 
+// MembershipChange is one staged edit to a team's membership: add User to Team,
+// or remove them. It is what the page accumulates so several can be confirmed
+// together.
+type MembershipChange struct {
+	Team   string `json:"team"`
+	User   string `json:"user"`
+	Member bool   `json:"member"` // true to add, false to remove
+}
+
+// BatchSetTeamMembership applies several membership changes as one, on behalf of
+// actor.
+//
+// The point of doing it in one call is the same one that made a single change go
+// through the control plane: the roster is version-controlled and reconciled
+// downstream, so N separate edits are N commits and N syncs. An operator who
+// stages a handful of changes and confirms them wants one commit and one
+// convergence to watch — so the whole batch is authorized, validated, and then
+// handed down together, and it lands or it does not as a whole.
+//
+// Authorization is per-team and total: if the actor may not manage even one of
+// the teams named, nothing is done. A team owner is not an administrator, and a
+// batch is not a loophole for touching a team they do not own by burying it
+// among ones they do.
+func (a *Admin) BatchSetTeamMembership(ctx context.Context, actor string, changes []MembershipChange) error {
+	if len(changes) == 0 {
+		return nil
+	}
+
+	// One read of the roster serves both the authorization and the validation
+	// below; the control plane re-checks everything downstream regardless.
+	d, err := a.Declaration(ctx)
+	if err != nil {
+		return err
+	}
+	users := map[string]bool{}
+	for _, u := range d.Users {
+		users[u.Name] = true
+	}
+	owners := map[string][]string{}
+	for _, g := range d.Groups {
+		owners[g.Name] = g.Owners
+	}
+
+	admin, err := a.IsAdmin(ctx, actor)
+	if err != nil {
+		return err
+	}
+	for _, c := range changes {
+		if _, ok := owners[c.Team]; !ok {
+			// An unknown team reads as one the actor does not own — a stranger learns
+			// nothing about which teams exist.
+			return fmt.Errorf("%w: %q", ErrNotOwner, c.Team)
+		}
+		if !admin && !slices.Contains(owners[c.Team], actor) {
+			return fmt.Errorf("%w: %q", ErrNotOwner, c.Team)
+		}
+		if !users[c.User] {
+			return fmt.Errorf("%w: %q", ErrUnknownUser, c.User)
+		}
+	}
+
+	// Through the control plane when one is configured: it edits the roster's
+	// source and lands the whole batch as one revision (usersync then reconciles,
+	// downstream). Adds go in as ordinary writing members.
+	if a.cfg.Controller != nil {
+		batch := make([]*controlpb.MembershipChange, 0, len(changes))
+		for _, c := range changes {
+			op := controlpb.MembershipChange_OP_ERASE
+			if c.Member {
+				op = controlpb.MembershipChange_OP_ADD
+			}
+			batch = append(batch, &controlpb.MembershipChange{
+				Op: op, Account: c.User, Group: c.Team, Role: controlpb.Role_ROLE_MEMBER,
+			})
+		}
+		if _, err := a.cfg.Controller.Membership.Batch(ctx, &controlpb.BatchMembershipsRequest{Changes: batch}); err != nil {
+			return fmt.Errorf("admin: apply %d membership changes: %w", len(changes), err)
+		}
+		return nil
+	}
+
+	// No control plane: edit the roster here with `usersync member`, once per
+	// change, then converge ONCE at the end rather than after each — the same
+	// single-convergence the batch is for.
+	for _, c := range changes {
+		op := "remove"
+		if c.Member {
+			op = "add"
+		}
+		if _, err := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "member", op, c.User, c.Team); err != nil {
+			return fmt.Errorf("admin: %s %q %s team %q: %w", op, c.User, prep(c.Member), c.Team, err)
+		}
+	}
+	if _, err := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "apply"); err != nil {
+		return fmt.Errorf("admin: the roster was updated but the system was not converged (run `usersync apply`): %w", err)
+	}
+	return nil
+}
+
+// MembershipApplied reports whether the running system already reflects every
+// change — the signal a status view waits on. It reads NSS (`getent group`), not
+// the roster: a change is "applied" once the pipeline it started (commit → the
+// roster file syncs in → usersync converges the system) has actually reached the
+// group table, which is the thing the person who made the change is waiting to
+// become true. An add is applied when the account appears among the group's
+// members; a remove, when it no longer does.
+func (a *Admin) MembershipApplied(ctx context.Context, changes []MembershipChange) (bool, error) {
+	// Cache each group's members across the changes so a batch touching one team
+	// reads it once.
+	seen := map[string][]string{}
+	for _, c := range changes {
+		members, ok := seen[c.Team]
+		if !ok {
+			m, _, err := a.groupMembers(ctx, c.Team)
+			if err != nil {
+				return false, err
+			}
+			members = m
+			seen[c.Team] = m
+		}
+		has := slices.Contains(members, c.User)
+		if has != c.Member {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// groupMembers lists a group's supplementary members from NSS, keyed by name for
+// the same reason lookupGroupGID is. A group NSS does not know yet is reported as
+// absent, not an error — the reconcile simply has not got there.
+func (a *Admin) groupMembers(ctx context.Context, name string) (members []string, found bool, err error) {
+	out, err := a.cfg.Runner.Run(ctx, "", "getent", "group", name)
+	if err != nil || strings.TrimSpace(out) == "" {
+		return nil, false, nil
+	}
+	// name:x:gid:members — members is a comma list, possibly empty.
+	f := strings.SplitN(strings.TrimSpace(out), ":", 4)
+	if len(f) < 4 {
+		return []string{}, true, nil
+	}
+	for _, m := range strings.Split(f[3], ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			members = append(members, m)
+		}
+	}
+	return members, true, nil
+}
+
 // TeamView is one team as its manager sees it.
 type TeamView struct {
 	Name        string   `json:"name"`
