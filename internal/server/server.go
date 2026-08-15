@@ -56,6 +56,13 @@ type Config struct {
 	// route a 404 and the login page draw no button — the password path is the
 	// one that is always there.
 	SSO *sso.Provider
+	// SSOForwardAuth switches the sign-in entry from darak's own code flow to a
+	// trusted reverse proxy: the button leads to /api/sso/forward, where the
+	// proxy has already authenticated the person and left the verified id_token
+	// on the Authorization header. darak still verifies that token (SSO.Assert);
+	// the proxy decides WHO, darak decides whether the token is genuine and
+	// whether the account may sign in. The code-flow routes stop being used.
+	SSOForwardAuth bool
 	// Identities translates what the provider asserts into an account name, and
 	// Pending holds the identities waiting for an operator to decide about.
 	// Both are required when SSO is set, and neither grants anything: what an
@@ -154,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 	// like a build without it.
 	mux.HandleFunc("GET /api/sso/login", s.handleSSOLogin)
 	mux.HandleFunc("GET /api/sso/callback", s.handleSSOCallback)
+	mux.HandleFunc("GET /api/sso/forward", s.handleSSOForward)
 	mux.HandleFunc("GET /api/sso/notice", s.handleSSONotice)
 
 	// Not behind authed(): the login page carries the mark too, and it is drawn

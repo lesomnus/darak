@@ -72,6 +72,7 @@ func realMain() error {
 		oidcRedirect   = flag.String("oidc-redirect-url", "", "the callback URL registered with the provider, e.g. https://darak.example.com/api/sso/callback")
 		oidcTenant     = flag.String("oidc-tenant", "", "required `tid` claim; mandatory for the multi-tenant Microsoft endpoints, where the issuer names no directory")
 		oidcDomains    = flag.String("oidc-email-domains", "", "comma-separated address domains to accept; empty accepts every address the tenant asserts")
+		oidcForward    = flag.Bool("sso-forward-auth", false, "trust a reverse proxy (oauth2-proxy behind Traefik ForwardAuth) that authenticates and hands the verified id_token on the Authorization header; darak still verifies it. No client secret or redirect URL is used; -oidc-client-id is the audience the token must carry (the proxy's client id)")
 		identitiesFile = flag.String("identities", "/var/lib/darak/identities.json", "where approved identity mappings are kept; must NOT be on the data volume")
 		pendingFile    = flag.String("identity-requests", "/var/lib/darak/identity-requests.json", "where unapproved sign-in requests are queued")
 		journalFile    = flag.String("identity-journal", "/var/lib/darak/identity-journal.jsonl", "append-only record of every mapping change; empty disables it")
@@ -201,6 +202,7 @@ func realMain() error {
 			RedirectURL:  *oidcRedirect,
 			Tenant:       *oidcTenant,
 			Domains:      splitList(*oidcDomains),
+			ForwardAuth:  *oidcForward,
 		})
 		if err != nil {
 			return err
@@ -279,20 +281,21 @@ func realMain() error {
 	}
 
 	srv, err := server.New(server.Config{
-		FS:         fs,
-		Activity:   acts,
-		Shares:     shares,
-		Admin:      adm,
-		UI:         web,
-		Brand:      brand,
-		Auth:       auth.NTLM{Runner: run.Exec{}, Path: *ntlmAuthBin},
-		Passwords:  &auth.PasswordStore{Runner: run.Exec{}, Path: *smbpasswdBin},
-		SSO:        ssoProvider,
-		Identities: identities,
-		Pending:    pending,
-		Journal:    journal,
-		Gate:       gate,
-		Provision:  provisioner,
+		FS:             fs,
+		Activity:       acts,
+		Shares:         shares,
+		Admin:          adm,
+		UI:             web,
+		Brand:          brand,
+		Auth:           auth.NTLM{Runner: run.Exec{}, Path: *ntlmAuthBin},
+		Passwords:      &auth.PasswordStore{Runner: run.Exec{}, Path: *smbpasswdBin},
+		SSO:            ssoProvider,
+		SSOForwardAuth: *oidcForward,
+		Identities:     identities,
+		Pending:        pending,
+		Journal:        journal,
+		Gate:           gate,
+		Provision:      provisioner,
 		ProvisionConfig: func() provision.Status {
 			if watcher == nil {
 				return provision.Status{}

@@ -68,8 +68,17 @@ type Config struct {
 	ClientSecret string
 
 	// RedirectURL must match what is registered with the provider, and must be
-	// the address a browser actually reaches this server on.
+	// the address a browser actually reaches this server on. Not used, and not
+	// required, in ForwardAuth mode: there is no code flow to come back to.
 	RedirectURL string
+
+	// ForwardAuth turns off the code flow and leaves only Assert: a trusted
+	// reverse proxy (oauth2-proxy behind Traefik's ForwardAuth) has already run
+	// the flow and hands the verified id_token over on a header. ClientID is
+	// then the AUDIENCE that token must carry — the proxy's own client id, which
+	// is what the tenant minted the token for. No client secret or redirect is
+	// needed, because this server never talks to the provider's token endpoint.
+	ForwardAuth bool
 
 	// Tenant is the required `tid` claim.
 	//
@@ -117,15 +126,23 @@ type Provider struct {
 // especially then, because "log in with your password instead" is the entire
 // fallback.
 func New(cfg Config) (*Provider, error) {
-	if cfg.Issuer == "" || cfg.ClientID == "" || cfg.RedirectURL == "" {
-		return nil, errors.New("sso: issuer, client id and redirect URL are required")
+	// ClientID is required in both modes: the code flow needs it to ask for a
+	// token, and ForwardAuth needs it as the audience the handed-over token must
+	// carry. RedirectURL is only for the code flow.
+	if cfg.Issuer == "" || cfg.ClientID == "" {
+		return nil, errors.New("sso: issuer and client id are required")
+	}
+	if !cfg.ForwardAuth && cfg.RedirectURL == "" {
+		return nil, errors.New("sso: redirect URL is required unless forward-auth is set")
 	}
 	if _, err := url.Parse(cfg.Issuer); err != nil {
 		return nil, fmt.Errorf("sso: issuer: %w", err)
 	}
-	u, err := url.Parse(cfg.RedirectURL)
-	if err != nil || !u.IsAbs() {
-		return nil, fmt.Errorf("sso: redirect URL must be absolute, got %q", cfg.RedirectURL)
+	if cfg.RedirectURL != "" {
+		u, err := url.Parse(cfg.RedirectURL)
+		if err != nil || !u.IsAbs() {
+			return nil, fmt.Errorf("sso: redirect URL must be absolute, got %q", cfg.RedirectURL)
+		}
 	}
 	if cfg.Tenant == "" {
 		iss := strings.TrimSuffix(cfg.Issuer, "/") + "/"
@@ -259,16 +276,45 @@ func (p *Provider) Exchange(ctx context.Context, code string, f Flow) (*Identity
 		return nil, fmt.Errorf("%w: the provider returned no id_token", ErrRejected)
 	}
 
-	// Signature, issuer, audience and expiry.
-	idToken, err := verifier.Verify(ctx, raw)
+	idToken, ident, err := p.assertToken(ctx, verifier, raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRejected, err)
+		return nil, err
 	}
 	// The nonce ties this token to the browser that started the flow. Without
 	// it, a token minted for any other client session could be pasted into this
-	// callback.
+	// callback. (ForwardAuth has no flow of its own and so no nonce; Assert,
+	// below, does not check one.)
 	if idToken.Nonce != f.Nonce {
 		return nil, fmt.Errorf("%w: nonce does not match this browser's sign-in", ErrRejected)
+	}
+	return ident, nil
+}
+
+// Assert turns an id_token handed over by a trusted reverse proxy into a
+// verified identity, for ForwardAuth deployments. It checks the same things the
+// code flow does — signature, issuer, audience and expiry against this tenant —
+// so a header pasted at a server reached directly still gets nowhere without a
+// token the tenant actually minted for this audience. It checks no nonce: there
+// is no browser flow here to tie one to, and the proxy is what ran the flow.
+func (p *Provider) Assert(ctx context.Context, raw string) (*Identity, error) {
+	_, verifier, err := p.ready(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ctx = p.ctx(ctx)
+	_, ident, err := p.assertToken(ctx, verifier, raw)
+	return ident, err
+}
+
+// assertToken verifies a raw id_token and turns it into an Identity. Shared by
+// the code flow (Exchange, which then also checks the nonce) and ForwardAuth
+// (Assert, which does not). The verified *oidc.IDToken is returned as well so a
+// caller can read the nonce off it without parsing the token twice.
+func (p *Provider) assertToken(ctx context.Context, verifier *oidc.IDTokenVerifier, raw string) (*oidc.IDToken, *Identity, error) {
+	// Signature, issuer, audience and expiry.
+	idToken, err := verifier.Verify(ctx, raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrRejected, err)
 	}
 
 	var claims struct {
@@ -279,10 +325,10 @@ func (p *Provider) Exchange(ctx context.Context, code string, f Flow) (*Identity
 		Email  string `json:"email"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		return nil, fmt.Errorf("%w: unreadable claims: %v", ErrRejected, err)
+		return nil, nil, fmt.Errorf("%w: unreadable claims: %v", ErrRejected, err)
 	}
 	if p.cfg.Tenant != "" && !strings.EqualFold(claims.Tenant, p.cfg.Tenant) {
-		return nil, fmt.Errorf("%w: %q", ErrWrongTenant, claims.Tenant)
+		return nil, nil, fmt.Errorf("%w: %q", ErrWrongTenant, claims.Tenant)
 	}
 
 	// Order matters. upn and preferred_username name the directory account
@@ -291,7 +337,7 @@ func (p *Provider) Exchange(ctx context.Context, code string, f Flow) (*Identity
 	// authoritative claims are offered first.
 	emails := p.accept(claims.UPN, claims.Pref, claims.Email)
 	if len(emails) == 0 {
-		return nil, ErrNoAddress
+		return nil, nil, ErrNoAddress
 	}
 
 	// Read a second time, untyped. The struct above is what this package acts
@@ -303,7 +349,7 @@ func (p *Provider) Exchange(ctx context.Context, code string, f Flow) (*Identity
 		all = map[string]any{}
 	}
 
-	return &Identity{
+	return idToken, &Identity{
 		Issuer:  idToken.Issuer,
 		Subject: idToken.Subject,
 		Name:    strings.TrimSpace(claims.Name),

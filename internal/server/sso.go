@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +45,19 @@ const flowCookie = "darak_sso"
 func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.SSO == nil {
 		http.NotFound(w, r)
+		return
+	}
+
+	// In forward-auth mode there is no code flow to begin: the button lands
+	// here (the UI only knows this one URL), and the sign-in actually happens at
+	// the proxy-guarded /api/sso/forward. Send the browser there, carrying the
+	// return target as `rd` so the person comes back where they started.
+	if s.cfg.SSOForwardAuth {
+		to := "/api/sso/forward"
+		if ret := r.URL.Query().Get("return"); ret != "" {
+			to += "?rd=" + url.QueryEscape(ret)
+		}
+		http.Redirect(w, r, to, http.StatusFound)
 		return
 	}
 
@@ -162,6 +176,100 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 	setCookie(w, token, s.cfg.SessionTTL, s.cfg.SecureCookies)
 	slog.Info("sso sign-in", "account", account, "issuer", ident.Issuer)
 	http.Redirect(w, r, flow.Return, http.StatusSeeOther)
+}
+
+// handleSSOForward signs somebody in from an id_token that a trusted reverse
+// proxy (oauth2-proxy, via Traefik's ForwardAuth) verified and copied onto the
+// Authorization header. There is no code flow here and no flow cookie: the
+// proxy ran the flow. darak still verifies the token against the tenant, so a
+// request that reaches this server directly with a made-up header gets a
+// rejection, not a session — the proxy is trusted for WHO, not for the token
+// being genuine. Everything after the identity is the code flow's path exactly:
+// resolve, gate, provision, session.
+func (s *Server) handleSSOForward(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.SSO == nil || !s.cfg.SSOForwardAuth {
+		http.NotFound(w, r)
+		return
+	}
+
+	raw := bearerToken(r.Header.Get("Authorization"))
+	if raw == "" {
+		// This route is meant to sit behind the SSO middleware, which never lets
+		// an unauthenticated request through. Arriving with no token is a
+		// deployment mistake, not a person to hand a password hint to.
+		s.ssoFailure(w, r, "로그인 정보가 전달되지 않았습니다. 관리자에게 문의해 주세요.", errors.New("forward-auth: no bearer token on request"))
+		return
+	}
+
+	ident, err := s.cfg.SSO.Assert(r.Context(), raw)
+	switch {
+	case errors.Is(err, sso.ErrUnavailable):
+		s.ssoFailure(w, r, "지금 SSO 제공자에 연결할 수 없습니다. 비밀번호로 로그인해 주세요.", err)
+		return
+	case errors.Is(err, sso.ErrWrongTenant):
+		s.ssoFailure(w, r, "이 조직의 계정이 아닙니다.", err)
+		return
+	case errors.Is(err, sso.ErrNoAddress):
+		s.ssoFailure(w, r, "이 계정에는 이 서버가 인정하는 주소가 없습니다. 관리자에게 문의해 주세요.", err)
+		return
+	case err != nil:
+		s.ssoFailure(w, r, "로그인을 확인하지 못했습니다.", err)
+		return
+	}
+
+	account, err := s.resolveIdentity(r.Context(), ident)
+	if err != nil {
+		s.ssoFailure(w, r, "로그인을 처리하지 못했습니다. 관리자에게 문의해 주세요.", err)
+		return
+	}
+	if account == "" {
+		s.queueIdentity(w, r, ident)
+		return
+	}
+
+	// The same gate the password and code-flow paths pass through, on every
+	// sign-in: an approval is not a standing permission.
+	verdict, err := s.cfg.Gate.MaySignIn(r.Context(), account)
+	if err != nil {
+		s.ssoFailure(w, r, "지금 계정 상태를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.", err)
+		return
+	}
+	if !verdict.Allowed {
+		slog.Warn("sso sign-in refused by the account gate",
+			"account", account, "reason", verdict.Reason, "subject", ident.Subject)
+		s.ssoFailure(w, r, "이 계정으로는 지금 로그인할 수 없습니다. 관리자에게 문의해 주세요.", errors.New(verdict.Reason))
+		return
+	}
+
+	token, err := s.sessions.Create(account)
+	if err != nil {
+		s.ssoFailure(w, r, "세션을 시작하지 못했습니다.", err)
+		return
+	}
+	setCookie(w, token, s.cfg.SessionTTL, s.cfg.SecureCookies)
+	slog.Info("sso sign-in (forward-auth)", "account", account, "issuer", ident.Issuer)
+	http.Redirect(w, r, localReturn(r.URL.Query().Get("rd")), http.StatusSeeOther)
+}
+
+// bearerToken pulls the token out of an `Authorization: Bearer <token>` header,
+// returning "" for anything that is not one.
+func bearerToken(h string) string {
+	const p = "Bearer "
+	if len(h) > len(p) && strings.EqualFold(h[:len(p)], p) {
+		return strings.TrimSpace(h[len(p):])
+	}
+	return ""
+}
+
+// localReturn keeps a post-sign-in redirect on this site. Anything that is not
+// a plain absolute path (a scheme, a host, a protocol-relative //host) becomes
+// "/", so a `rd` carried in from the proxy cannot be turned into an open
+// redirect.
+func localReturn(rd string) string {
+	if rd == "" || !strings.HasPrefix(rd, "/") || strings.HasPrefix(rd, "//") {
+		return "/"
+	}
+	return rd
 }
 
 // resolveIdentity turns a verified assertion into an account name, or "" when

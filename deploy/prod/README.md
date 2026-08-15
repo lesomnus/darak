@@ -96,6 +96,24 @@ DARAK_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
 
 **명령줄 인자로는 절대 들어가지 않고, 환경변수로 남지도 않습니다.** argv는 `/proc`으로 누구나 읽고, 헬퍼 프로세스는 서버에서 exec되어 환경을 물려받으므로 — 환경에 남겨두면 이 서버가 권한으로 갈라놓으려는 바로 그 사용자들이 자기 헬퍼의 `/proc/self/environ`으로 읽을 수 있습니다.
 
+### 리버스 프록시가 로그인시키기 (forward-auth)
+
+조직에 이미 SSO 프록시(예: Traefik `ForwardAuth` + oauth2-proxy)가 있다면, darak가 자체 코드 플로우를 돌리는 대신 **그 프록시가 인증하고 검증된 id_token을 `Authorization` 헤더로 넘겨주게** 할 수 있습니다. 앱마다 redirect URI를 등록하거나 client secret을 두지 않아도 됩니다 — IdP 앱은 프록시가 하나만 소유합니다.
+
+```
+DARAK_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0
+DARAK_OIDC_CLIENT_ID=<프록시의 client id>   # 이 모드에선 토큰의 audience 로 쓰입니다
+DARAK_OIDC_TENANT=<tenant-id>
+DARAK_OIDC_EMAIL_DOMAINS=example.com
+DARAK_SSO_FORWARD_AUTH=1                    # 코드 플로우 대신 프록시를 신뢰
+```
+
+`DARAK_SSO_FORWARD_AUTH=1`이면 `DARAK_OIDC_REDIRECT_URL`도 `DARAK_OIDC_CLIENT_SECRET*`도 필요 없습니다. 로그인 버튼(UI는 `/api/sso/login` 하나만 압니다)은 프록시가 지키는 `/api/sso/forward`로 넘기고, 거기서 프록시가 넘긴 Bearer id_token을 darak가 **테넌트 JWKS로 검증**한 뒤 나머지(신원 매핑·계정 게이트·자동 가입·세션)는 코드 플로우와 완전히 같은 길을 탑니다.
+
+**신뢰 경계는 서명 검증입니다, 네트워크가 아니라.** darak를 프록시를 거치지 않고 직접 때려 헤더를 위조해도, 테넌트가 이 audience로 실제 발급한 토큰이 아니면 세션이 생기지 않습니다. 그래서 이 모드는 darak가 프록시 뒤에 있다고 **가정만** 하지 않고 매번 토큰을 검증합니다.
+
+프록시가 `/api/sso/forward`에 `Authorization: Bearer <id_token>`을 실어 보내도록 미들웨어의 `authResponseHeaders`에 `Authorization`을 포함시키세요(oauth2-proxy는 `set_authorization_header = true`). 그리고 그 경로만 인증 미들웨어 뒤에 두어야 비밀번호 폴백(그 외 경로)이 살아 있습니다. **SMB(445)는 이 모드에서도 비밀번호뿐**입니다 — HTTP forward-auth가 낄 자리가 없습니다.
+
 ### 자동 프로비저닝 (선택)
 
 기본은 꺼져 있고, 켜지 않으면 새 신원은 전부 관리자 승인을 기다립니다.

@@ -72,17 +72,32 @@ fi
 # disabled` in the roster keeps closing SMB and the web together.
 if [[ -n ${DARAK_OIDC_ISSUER:-} ]]; then
 	[[ -n ${DARAK_OIDC_CLIENT_ID:-} ]] || die "DARAK_OIDC_ISSUER is set but DARAK_OIDC_CLIENT_ID is not"
-	[[ -n ${DARAK_OIDC_REDIRECT_URL:-} ]] ||
-		die "DARAK_OIDC_ISSUER is set but DARAK_OIDC_REDIRECT_URL is not — it must be the address a browser actually reaches this server on, e.g. https://darak.example.com/api/sso/callback"
 
 	args+=(
 		-oidc-issuer "$DARAK_OIDC_ISSUER"
 		-oidc-client-id "$DARAK_OIDC_CLIENT_ID"
-		-oidc-redirect-url "$DARAK_OIDC_REDIRECT_URL"
 		-identities "$STATE_DIR/identities.json"
 		-identity-requests "$STATE_DIR/identity-requests.json"
 		-identity-journal "$STATE_DIR/identity-journal.jsonl"
 	)
+
+	# Two ways to sign in with the company account:
+	#
+	#   forward-auth  A reverse proxy (oauth2-proxy behind Traefik's ForwardAuth)
+	#                 authenticates and hands the verified id_token over on the
+	#                 Authorization header. darak still verifies it, but runs no
+	#                 code flow — so no redirect URL and no client secret, and
+	#                 -oidc-client-id is the AUDIENCE the token must carry (the
+	#                 proxy's client id).
+	#   code flow     darak is the OIDC client itself and needs a redirect URL and
+	#                 (for a confidential client) a secret.
+	if [[ ${DARAK_SSO_FORWARD_AUTH:-} == "1" ]]; then
+		args+=(-sso-forward-auth)
+	else
+		[[ -n ${DARAK_OIDC_REDIRECT_URL:-} ]] ||
+			die "DARAK_OIDC_ISSUER is set but DARAK_OIDC_REDIRECT_URL is not — it must be the address a browser actually reaches this server on, e.g. https://darak.example.com/api/sso/callback (or set DARAK_SSO_FORWARD_AUTH=1 to let a reverse proxy do the flow)"
+		args+=(-oidc-redirect-url "$DARAK_OIDC_REDIRECT_URL")
+	fi
 	# `if`, not `[[ ... ]] && ...`: under `set -e` the one-liner form exits the
 	# script when the test is false, so an unset optional variable would stop the
 	# container from starting.
