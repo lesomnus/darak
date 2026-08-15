@@ -79,6 +79,16 @@ type Config struct {
 	// this server still has an account for them.
 	Gate AccountGate
 
+	// TrustEmail, when true, binds an existing account to an SSO identity on the
+	// first sign-in WITHOUT an operator approval, whenever a trusted-domain
+	// address the token carries derives that account's name and the account
+	// exists. It removes the rubber-stamp step for members the roster already
+	// has, leaving only genuinely new identities for provisioning/approval. It
+	// is only sound with a domain allow-list (the provider filters addresses to
+	// it), so a deployment that sets this MUST also set the accepted domains;
+	// main refuses the combination otherwise.
+	TrustEmail bool
+
 	// Provision asks something outside this server to create an account for an
 	// identity nothing here answers for yet. Nil leaves every unmapped identity
 	// to the approval queue, which is the default and the conservative one.

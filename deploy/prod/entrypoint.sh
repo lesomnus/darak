@@ -120,6 +120,15 @@ if [[ -n ${DARAK_OIDC_ISSUER:-} ]]; then
 	if [[ -n ${DARAK_OIDC_EMAIL_DOMAINS:-} ]]; then
 		args+=(-oidc-email-domains "$DARAK_OIDC_EMAIL_DOMAINS")
 	fi
+	# Trust-email: an existing member's first SSO binds without an operator
+	# approval when a trusted-domain address names their account. darak refuses
+	# this without an email allow-list; catch it here with a clearer message than
+	# a startup abort halfway through boot.
+	if [[ ${DARAK_SSO_TRUST_EMAIL:-} == "1" ]]; then
+		[[ -n ${DARAK_OIDC_EMAIL_DOMAINS:-} ]] ||
+			die "DARAK_SSO_TRUST_EMAIL=1 needs DARAK_OIDC_EMAIL_DOMAINS — trusting an address to name an account is only safe within domains you control"
+		args+=(-sso-trust-email)
+	fi
 
 	# Auto-provisioning. Off unless a rules file is named, and it is read from
 	# the config mount because it is a reviewed artifact like the roster: it can

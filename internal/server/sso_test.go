@@ -171,6 +171,96 @@ func TestSSORoutesAre404WithoutAProvider(t *testing.T) {
 
 // --- auto-provisioning ---
 
+// --- trust-email (auto-bind an existing account from a trusted address) ---
+
+// accountFromEmail takes the local part only when it is already a valid account
+// name, lowercased; anything else derives nothing.
+func TestAccountFromEmail(t *testing.T) {
+	for _, tt := range []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"alice@example.com", "alice", true},
+		{"First.Last@example.com", "first.last", true},
+		{"a+tag@example.com", "", false}, // plus-tag is not a valid name
+		{"has space@example.com", "", false},
+		{"@example.com", "", false},
+		{"no-at-sign", "", false},
+	} {
+		got, ok := accountFromEmail(tt.in)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("accountFromEmail(%q) = %q,%v; want %q,%v", tt.in, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+// Flag on: a trusted address whose local part names an existing account binds it
+// on the spot, pinning the subject, with no approval queue.
+func TestTrustEmailBindsExistingAccount(t *testing.T) {
+	s := ssoServer(t)
+	s.cfg.TrustEmail = true
+	s.cfg.Gate = gate(map[string]bool{"alice": true})
+
+	got, err := s.resolveIdentity(context.Background(), ident("object-1", "alice@example.com"))
+	if err != nil || got != "alice" {
+		t.Fatalf("resolveIdentity = %q, %v; want alice", got, err)
+	}
+	if account, ok := s.cfg.Identities.BySubject("https://idp", "object-1"); !ok || account != "alice" {
+		t.Errorf("the subject was not pinned: %q, %v", account, ok)
+	}
+}
+
+// Flag off (default): the same identity gets no shortcut — with nothing else to
+// resolve it, it falls through to nobody, exactly as before.
+func TestTrustEmailOffKeepsApproval(t *testing.T) {
+	s := ssoServer(t)
+	s.cfg.Gate = gate(map[string]bool{"alice": true}) // account exists, flag is off
+
+	got, err := s.resolveIdentity(context.Background(), ident("object-1", "alice@example.com"))
+	if err != nil || got != "" {
+		t.Fatalf("resolveIdentity = %q, %v; want nobody (approval still required)", got, err)
+	}
+	if _, ok := s.cfg.Identities.BySubject("https://idp", "object-1"); ok {
+		t.Error("nothing should have been pinned with the flag off")
+	}
+}
+
+// Flag on but the derived account does not exist: no binding, falls through
+// (here to nobody, since provisioning is not configured) so a genuinely new
+// person still goes the normal route.
+func TestTrustEmailUnknownAccountFallsThrough(t *testing.T) {
+	s := ssoServer(t)
+	s.cfg.TrustEmail = true
+	s.cfg.Gate = gate(map[string]bool{"alice": true})
+
+	got, err := s.resolveIdentity(context.Background(), ident("object-9", "stranger@example.com"))
+	if err != nil || got != "" {
+		t.Fatalf("resolveIdentity = %q, %v; want nobody", got, err)
+	}
+}
+
+// Flag on, but the account the address names is already pinned to a DIFFERENT
+// subject: the reassigned-address case. Refused, nothing bound.
+func TestTrustEmailRefusesAReassignedAddress(t *testing.T) {
+	s := ssoServer(t)
+	s.cfg.TrustEmail = true
+	s.cfg.Gate = gate(map[string]bool{"alice": true})
+	// alice is bound to object-1 with no email on the mapping — so step 2 does
+	// not catch it and the trust-email step is the one that must refuse.
+	if _, err := s.cfg.Identities.Approve("alice", "https://idp", "object-1", nil, "admin", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.resolveIdentity(context.Background(), ident("object-2", "alice@example.com"))
+	if err != nil {
+		t.Fatalf("resolveIdentity: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveIdentity = %q; want nobody — the address was reassigned", got)
+	}
+}
+
 // gateOf answers about a set of accounts, and satisfies both the sign-in gate
 // and what provisioning needs.
 //

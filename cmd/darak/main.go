@@ -74,6 +74,7 @@ func realMain() error {
 		oidcTenant     = flag.String("oidc-tenant", "", "required `tid` claim; mandatory for the multi-tenant Microsoft endpoints, where the issuer names no directory")
 		oidcDomains    = flag.String("oidc-email-domains", "", "comma-separated address domains to accept; empty accepts every address the tenant asserts")
 		oidcForward    = flag.Bool("sso-forward-auth", false, "trust a reverse proxy (oauth2-proxy behind Traefik ForwardAuth) that authenticates and hands the verified id_token on the Authorization header; darak still verifies it. No client secret or redirect URL is used; -oidc-client-id is the audience the token must carry (the proxy's client id)")
+		ssoTrustEmail  = flag.Bool("sso-trust-email", false, "bind an EXISTING account to an SSO identity on first sign-in without operator approval, when a trusted-domain address derives that account's name. Removes the approval step for members the roster already has; new identities still go through provisioning/approval. Requires -oidc-email-domains (refused without it)")
 		identitiesFile = flag.String("identities", "/var/lib/darak/identities.json", "where approved identity mappings are kept; must NOT be on the data volume")
 		pendingFile    = flag.String("identity-requests", "/var/lib/darak/identity-requests.json", "where unapproved sign-in requests are queued")
 		journalFile    = flag.String("identity-journal", "/var/lib/darak/identity-journal.jsonl", "append-only record of every mapping change; empty disables it")
@@ -189,6 +190,14 @@ func realMain() error {
 		watcher     *provision.Watcher
 	)
 	if *oidcIssuer != "" {
+		// Trust-email binds an account whenever a token carries an address whose
+		// local part names it. That is only safe if the addresses are already
+		// confined to domains this deployment controls — otherwise anyone with an
+		// address anywhere whose local part matches a member's name would be let
+		// straight in. Refuse the combination rather than run an open door.
+		if *ssoTrustEmail && *oidcDomains == "" {
+			return errors.New("-sso-trust-email requires -oidc-email-domains: trusting an address to name an account is only safe within domains you control")
+		}
 		secret := ""
 		if *oidcSecretFile != "" {
 			secret, err = sso.ReadSecret(*oidcSecretFile)
@@ -296,6 +305,7 @@ func realMain() error {
 		Pending:        pending,
 		Journal:        journal,
 		Gate:           gate,
+		TrustEmail:     *ssoTrustEmail,
 		Provision:      provisioner,
 		ProvisionConfig: func() provision.Status {
 			if watcher == nil {

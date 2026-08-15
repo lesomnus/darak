@@ -89,6 +89,7 @@ POST   /api/password           {"current":..., "new":...} — asks for the curre
 
 GET    /api/sso/login          off unless -oidc-issuer is set, 404 otherwise
 GET    /api/sso/callback       identity in, account name out; the gate decides
+GET    /api/sso/forward        forward-auth: a trusted proxy's verified id_token
 GET    /api/sso/notice         one-off message for the page it redirects to
 
 GET    /api/branding           no session — the login page carries the mark too
@@ -130,6 +131,18 @@ that matches a path but not its method, which gets 200 and index.html rather
 than 405. [`docs/http-api.md`](docs/http-api.md) is the spec: exact shapes,
 status codes, and the several places where what the code does is not what the
 method name suggests.
+
+An SSO sign-in resolves to an account by, in order: the directory subject if it
+has been seen before; an address an operator has approved (which pins the
+subject); then provisioning for a genuinely new person. `-sso-trust-email`
+inserts one more step before provisioning — an EXISTING account whose name a
+trusted-domain address derives is bound on the spot, no approval — so a roster a
+directory already lists does not need an operator to rubber-stamp each member's
+first sign-in. It is opt-in and refuses to start without `-oidc-email-domains`,
+because trusting an address to name an account is only sound within domains you
+control; the subject still pins on first use, so a later reassignment of a
+departed member's address cannot ride in on it (and `status: disabled` closes
+the account regardless).
 
 ## The interface
 

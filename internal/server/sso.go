@@ -339,6 +339,44 @@ func (s *Server) resolveIdentity(ctx context.Context, ident *sso.Identity) (stri
 		return account, nil
 	}
 
+	// 2b. Trust-email: an existing account whose NAME a trusted address derives,
+	// bound on the spot without an approval. Opt-in (TrustEmail), because it
+	// trades the operator's rubber-stamp for trust in the address — which is safe
+	// only because the provider has already filtered ident.Emails to the accepted
+	// domains (and startup refuses this mode without a domain allow-list), the
+	// account must actually exist, and the subject pins on first use, closing the
+	// window a reassigned address could otherwise ride in on. A departed member's
+	// address handed to someone new still cannot get in once status: disabled is
+	// set, which is the offboarding step that predates this.
+	if s.cfg.TrustEmail {
+		for _, e := range ident.Emails {
+			account, ok := accountFromEmail(e)
+			if !ok || !s.cfg.Gate.Exists(ctx, account) {
+				continue
+			}
+			// Bind with the same call an approval makes — it creates the mapping
+			// for a member who had none, records only the address that named the
+			// account, and REFUSES if that account already answers to a different
+			// subject or address (the reassignment case), so the store keeps the
+			// last word here exactly as it does for a provisioned or approved bind.
+			if _, err := s.cfg.Identities.Approve(account, ident.Issuer, ident.Subject, []string{e}, "trust-email", time.Now()); err != nil {
+				if errors.Is(err, identity.ErrSubjectPinned) || errors.Is(err, identity.ErrTaken) {
+					slog.Warn("sso trust-email conflicts with an existing binding",
+						"account", account, "address", e, "subject", ident.Subject)
+					return "", nil
+				}
+				return "", err
+			}
+			s.journal(identity.JournalEntry{
+				Action: "trust-email", Account: account,
+				Issuer: ident.Issuer, Subject: ident.Subject, Emails: []string{e},
+			})
+			slog.Info("bound an SSO identity by trusted email on first sign-in",
+				"account", account, "address", e, "issuer", ident.Issuer)
+			return account, nil
+		}
+	}
+
 	// 3. Nobody yet. Provisioning may be able to change that.
 	return s.provision(ctx, ident), nil
 }
@@ -737,4 +775,28 @@ func (s *Server) journal(e identity.JournalEntry) {
 // satisfied by auth.Gate.
 type AccountGate interface {
 	MaySignIn(ctx context.Context, user string) (auth.Verdict, error)
+	// Exists reports whether the name is an account the system knows at all,
+	// even a suspended one. Trust-email (resolveIdentity) uses it to bind a
+	// trusted address only to a real account, never to invent one. It already
+	// rejects a name that could not be an account, so a derived candidate can be
+	// handed to it directly.
+	Exists(ctx context.Context, user string) bool
+}
+
+// accountFromEmail derives the account name a trusted address stands for: the
+// local part (before '@'), lowercased, but ONLY when that is already a valid
+// account name. A local part that is not one — a plus-tag, a dot-atom no roster
+// would use — yields nothing rather than being mangled into a name that might
+// answer for somebody else. The shape is the one usersync creates and auth.Gate
+// re-checks, so a candidate that passes here is one Exists can look up.
+func accountFromEmail(email string) (string, bool) {
+	local, _, ok := strings.Cut(email, "@")
+	if !ok || local == "" {
+		return "", false
+	}
+	local = strings.ToLower(local)
+	if !auth.ValidName(local) {
+		return "", false
+	}
+	return local, true
 }
