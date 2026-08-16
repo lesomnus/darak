@@ -159,8 +159,14 @@ func realMain() error {
 		if err != nil {
 			return fmt.Errorf("control plane at %s: %w", *controlAddr, err)
 		}
-		defer ctrl.Close()
+	} else {
+		// No sidecar: edit the roster.yaml on this host directly, through
+		// `usersync member` + `usersync apply`. This is the common, non-GitOps
+		// deployment. Onboarding is not auto-provisioned here (Local leaves
+		// Enrollment nil), so an unmapped SSO identity goes to the approval queue.
+		ctrl = control.Local(run.Exec{}, "usersync")
 	}
+	defer ctrl.Close()
 
 	var adm *admin.Admin
 	if *adminGroup != "" {
@@ -333,9 +339,9 @@ func realMain() error {
 		// handleProvisioning answers `enabled: false`.
 		ProvisionConfig: provisionStatus(watcher),
 		SessionTTL:      *sessionTTL,
-		SecureCookies: *secureCookies,
-		MaxUpload:     *maxUpload,
-		AnonymousUser: *anonymousUser,
+		SecureCookies:   *secureCookies,
+		MaxUpload:       *maxUpload,
+		AnonymousUser:   *anonymousUser,
 	})
 	if err != nil {
 		return err

@@ -142,7 +142,10 @@ func (f fakeResolver) Resolve(ctx context.Context, user string) (helperpool.Cred
 
 func newTestAdmin(t *testing.T, r *fakeRunner, res fakeResolver) *Admin {
 	t.Helper()
-	a, err := New(Config{Root: "/srv/data", Runner: r, Resolver: res})
+	// The local control plane is the default deployment: team changes go through
+	// it as `usersync member` + `usersync apply` on this host, which is what the
+	// membership tests observe on the same fake runner.
+	a, err := New(Config{Root: "/srv/data", Runner: r, Resolver: res, Controller: control.Local(r, "usersync")})
 	if err != nil {
 		t.Fatal(err)
 	}

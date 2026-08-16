@@ -189,15 +189,14 @@ func (a *Admin) MayManageTeam(ctx context.Context, actor, team string) (bool, er
 
 // SetTeamMembership adds or removes a member, on behalf of actor.
 //
-// The write goes through `usersync member`, which edits the roster's syntax
+// darak authorizes and validates here, then hands the write to the control
+// plane. The write itself is `usersync member` — which edits the roster's syntax
 // tree so the change is one line, validates the result before writing so a bad
 // request cannot leave a roster the next boot refuses, and takes a lock so two
-// owners editing at once do not lose one another's change.
-//
-// `usersync apply` then converges the system. It runs here, synchronously,
-// because the alternative is a request that succeeds while nothing happens
-// until the next restart — and the person who clicked is the only one in a
-// position to notice that it did not work.
+// owners editing at once do not lose one another's change — followed by
+// `usersync apply` to converge the system. Locally that runs on this host; behind
+// a sidecar it runs there against a repository. Either way it is synchronous, so
+// the request does not succeed while nothing happens until the next restart.
 func (a *Admin) SetTeamMembership(ctx context.Context, actor, team, user string, member bool) error {
 	ok, err := a.MayManageTeam(ctx, actor, team)
 	if err != nil {
@@ -223,40 +222,37 @@ func (a *Admin) SetTeamMembership(ctx context.Context, actor, team, user string,
 		op = "add"
 	}
 
-	// Through the control plane when one is configured: darak has decided the
-	// caller may, and the control plane edits the roster's source and lands the
-	// change (usersync then reconciles, downstream). Adding puts the account in
-	// as an ordinary writing member; a later re-grade to reader/owner is Grade,
-	// which the current team panel does not yet drive.
-	if a.cfg.Controller != nil {
-		var err error
-		if member {
-			_, err = a.cfg.Controller.Membership.Add(ctx, &controlpb.AddMembershipRequest{
-				Account: user, Group: team, Role: controlpb.Role_ROLE_MEMBER,
-			})
-		} else {
-			_, err = a.cfg.Controller.Membership.Erase(ctx, &controlpb.EraseMembershipRequest{
-				Account: user, Group: team,
-			})
-		}
-		if err != nil {
-			return fmt.Errorf("admin: %s %q %s team %q: %w", op, user, prep(member), team, err)
-		}
-		return nil
+	// darak has decided the caller may; the control plane does the writing. It
+	// edits the roster (a local file, or a repository behind a sidecar — the
+	// Controller was built one way or the other) and converges, and usersync
+	// reconciles the system to it. Adding puts the account in as an ordinary
+	// writing member; a later re-grade to reader/owner is Grade, which the
+	// current team panel does not yet drive.
+	if err := a.membership(); err != nil {
+		return err
 	}
-
-	// No control plane: edit the roster here with `usersync member`. This needs a
-	// writable roster on the host and is the pre-control-plane path.
-	if _, err := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "member", op, user, team); err != nil {
-		return fmt.Errorf("admin: %s %q %s team %q: %w", op, user, prep(member), team, err)
+	var cerr error
+	if member {
+		_, cerr = a.cfg.Controller.Membership.Add(ctx, &controlpb.AddMembershipRequest{
+			Account: user, Group: team, Role: controlpb.Role_ROLE_MEMBER,
+		})
+	} else {
+		_, cerr = a.cfg.Controller.Membership.Erase(ctx, &controlpb.EraseMembershipRequest{
+			Account: user, Group: team,
+		})
 	}
+	if cerr != nil {
+		return fmt.Errorf("admin: %s %q %s team %q: %w", op, user, prep(member), team, cerr)
+	}
+	return nil
+}
 
-	// Converge. A failure here is reported but NOT rolled back: the roster is
-	// the desired state and it now says the right thing, so the correct recovery
-	// is another apply rather than an edit that puts the declaration back to
-	// something nobody asked for.
-	if _, err := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "apply"); err != nil {
-		return fmt.Errorf("admin: the roster was updated but the system was not converged (run `usersync apply`): %w", err)
+// membership reports the control plane can change group membership, so a caller
+// gets a clear error instead of a nil-pointer panic on a deployment wired
+// without one.
+func (a *Admin) membership() error {
+	if a.cfg.Controller == nil || a.cfg.Controller.Membership == nil {
+		return errors.New("admin: no control plane configured to change team membership")
 	}
 	return nil
 }
@@ -329,40 +325,25 @@ func (a *Admin) BatchSetTeamMembership(ctx context.Context, actor string, change
 		}
 	}
 
-	// Through the control plane when one is configured: it edits the roster's
-	// source and lands the whole batch as one revision (usersync then reconciles,
-	// downstream). Adds go in as ordinary writing members.
-	if a.cfg.Controller != nil {
-		batch := make([]*controlpb.MembershipChange, 0, len(changes))
-		for _, c := range changes {
-			op := controlpb.MembershipChange_OP_ERASE
-			if c.Member {
-				op = controlpb.MembershipChange_OP_ADD
-			}
-			batch = append(batch, &controlpb.MembershipChange{
-				Op: op, Account: c.User, Group: c.Team, Role: controlpb.Role_ROLE_MEMBER,
-			})
-		}
-		if _, err := a.cfg.Controller.Membership.Batch(ctx, &controlpb.BatchMembershipsRequest{Changes: batch}); err != nil {
-			return fmt.Errorf("admin: apply %d membership changes: %w", len(changes), err)
-		}
-		return nil
+	// Hand the whole batch to the control plane, which lands it as one change (a
+	// single commit behind a sidecar, or one `usersync apply` locally) so the
+	// downstream reconcile converges once, not once per edit. Adds go in as
+	// ordinary writing members.
+	if err := a.membership(); err != nil {
+		return err
 	}
-
-	// No control plane: edit the roster here with `usersync member`, once per
-	// change, then converge ONCE at the end rather than after each — the same
-	// single-convergence the batch is for.
+	batch := make([]*controlpb.MembershipChange, 0, len(changes))
 	for _, c := range changes {
-		op := "remove"
+		op := controlpb.MembershipChange_OP_ERASE
 		if c.Member {
-			op = "add"
+			op = controlpb.MembershipChange_OP_ADD
 		}
-		if _, err := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "member", op, c.User, c.Team); err != nil {
-			return fmt.Errorf("admin: %s %q %s team %q: %w", op, c.User, prep(c.Member), c.Team, err)
-		}
+		batch = append(batch, &controlpb.MembershipChange{
+			Op: op, Account: c.User, Group: c.Team, Role: controlpb.Role_ROLE_MEMBER,
+		})
 	}
-	if _, err := a.cfg.Runner.Run(ctx, "", a.cfg.UsersyncBin, "apply"); err != nil {
-		return fmt.Errorf("admin: the roster was updated but the system was not converged (run `usersync apply`): %w", err)
+	if _, err := a.cfg.Controller.Membership.Batch(ctx, &controlpb.BatchMembershipsRequest{Changes: batch}); err != nil {
+		return fmt.Errorf("admin: apply %d membership changes: %w", len(changes), err)
 	}
 	return nil
 }

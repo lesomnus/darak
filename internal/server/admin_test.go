@@ -9,6 +9,7 @@ import (
 
 	"github.com/lesomnus/darak/internal/admin"
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/control"
 	"github.com/lesomnus/darak/internal/helperpool"
 	"github.com/lesomnus/darak/internal/vfs"
 )
@@ -72,8 +73,9 @@ func adminHarnessWith(t *testing.T, a auth.Authenticator) (*harness, *scriptRunn
 		err: map[string]error{},
 	}
 	adm, err := admin.New(admin.Config{
-		Root:   base.root,
-		Runner: run,
+		Root:       base.root,
+		Runner:     run,
+		Controller: control.Local(run, "usersync"),
 		Resolver: mapResolver{
 			// alice is an ADMIN (gid 2000) and owns no team.
 			"alice": {UID: 3001, GID: 3001, Groups: []uint32{3001, 2000}},

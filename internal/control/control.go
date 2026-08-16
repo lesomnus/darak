@@ -20,15 +20,22 @@ import (
 )
 
 // Controller is the set of resource clients darak calls the control plane
-// through. It is a value a deployment either has (a control address was
-// configured) or does not; nil means the feature is off and callers fall back to
-// what they did before it existed.
+// through. Build it with Dial (a gRPC sidecar that commits the roster to a
+// repository) or Local (edits a roster.yaml on this host) — either way darak
+// calls the same generated interfaces, so where the roster lives is decided once
+// here, not at every call site.
+//
+// The two service fields are independently optional. A deployment may have one
+// backend serve Membership but not Enrollment: Local does exactly that (team
+// changes edit the file; onboarding falls back to the approval queue), so a
+// caller checks the specific field it needs, not just the Controller.
 type Controller struct {
 	// Enrollment is the onboarding lifecycle: Add on an unmapped identity's first
-	// sign-in, Get to report how far it got.
+	// sign-in, Get to report how far it got. Nil when the deployment does not
+	// auto-provision (Local leaves it nil) — the caller then uses the queue.
 	Enrollment controlpb.EnrollmentServiceClient
 	// Membership is the operator page's group changes: Add to put an account in a
-	// group, Erase to take it out.
+	// group, Erase to take it out, Batch to land several at once.
 	Membership controlpb.MembershipServiceClient
 
 	conn *grpc.ClientConn

@@ -476,7 +476,7 @@ func (s *Server) queueIdentity(w http.ResponseWriter, r *http.Request, ident *ss
 	// static line. It falls through to the queue when no username can be derived
 	// or the control plane refuses — a person darak cannot name still gets a
 	// human to look at them.
-	if s.cfg.Controller != nil {
+	if s.cfg.Controller != nil && s.cfg.Controller.Enrollment != nil {
 		if username, ok := firstAccountName(ident.Emails); ok {
 			e, err := s.cfg.Controller.Enrollment.Add(r.Context(), &controlpb.AddEnrollmentRequest{
 				Username: username,
