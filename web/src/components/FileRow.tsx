@@ -71,12 +71,28 @@ export function FileRow({
   return (
     // data-row is what the virtualiser measures: it needs one real, laid-out
     // row to know how tall the rest would be.
-    <div className="row" data-row role="button" tabIndex={0} onClick={onOpen} onKeyDown={onKeyDown}>
+    <div
+      className="row"
+      data-row
+      // Only the teams root sets accessible; a false means this user is not in
+      // the team (nor a reader), so the folder is shown locked and dimmed. It
+      // stays clickable — the kernel is the real gate, this is only the hint.
+      data-locked={entry.accessible === false || undefined}
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={onKeyDown}
+    >
       <span className="icon" data-kind={kind}>
         <Icon name={kind} />
       </span>
       <span className="name">
         <Marked text={row.nfc} positions={row.alignable ? row.match?.positions : undefined} />
+        {entry.accessible === false && (
+          <span className="lock" title="이 팀의 멤버가 아니라 열 수 없습니다">
+            <Icon name="lock" size={14} aria-label="접근 권한 없음" />
+          </span>
+        )}
       </span>
       {/* Wrapped so the two can move together. On a wide screen the wrapper is
           `display: contents` and they are columns of the row; on a narrow one it

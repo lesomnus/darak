@@ -39,6 +39,10 @@ type DeclaredGroup struct {
 	GID         uint32   `json:"gid"`
 	Description string   `json:"description,omitempty"`
 	Owners      []string `json:"owners"`
+	// Readers are other groups whose members may READ this group's folder but not
+	// write it. Used to compute who may enter a team folder without probing the
+	// filesystem — a reader is not a member but can still open it.
+	Readers []string `json:"readers,omitempty"`
 	// Anonymous is the folder's unauthenticated-access level: "none", "read", or
 	// "write". It is what tells the interface a folder is public, so an anonymous
 	// visitor can be shown where to look; the kernel still enforces the access.
@@ -119,6 +123,47 @@ func (a *Admin) PublicFolders(ctx context.Context) ([]PublicFolder, error) {
 		}
 	}
 	slices.SortFunc(out, func(x, y PublicFolder) int { return strings.Compare(x.Name, y.Name) })
+	return out, nil
+}
+
+// TeamAccess reports, per declared team, whether user may ENTER its folder.
+//
+// It is derived from the roster, not by opening (or stat-ing) each team folder:
+// the answer is a set intersection over data already parsed, so a listing of the
+// `teams` root costs one roster read instead of a probe per team. A folder is
+// enterable when it is world-open (anonymous read or write), when the user is in
+// the team group, or when the user is in one of the team's reader groups.
+//
+// This is a DISPLAY hint only — a lock in the listing instead of a permission
+// error on the click. The kernel still decides on every open, so a stale or
+// wrong answer here mislabels an icon and grants nothing. That is also why it is
+// uniform: an admin is not special for reading a team's files (there is no
+// superuser), so an admin sees the same locks anyone else would.
+func (a *Admin) TeamAccess(ctx context.Context, user string) (map[string]bool, error) {
+	d, err := a.Declaration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mine := map[string]bool{}
+	for _, u := range d.Users {
+		if u.Name == user {
+			for _, g := range u.Groups {
+				mine[g] = true
+			}
+			break
+		}
+	}
+	out := make(map[string]bool, len(d.Groups))
+	for _, g := range d.Groups {
+		access := g.Anonymous == "read" || g.Anonymous == "write" || mine[g.Name]
+		for _, r := range g.Readers {
+			if access {
+				break
+			}
+			access = mine[r]
+		}
+		out[g.Name] = access
+	}
 	return out, nil
 }
 

@@ -50,6 +50,7 @@ export type IconName =
   | 'star'
   | 'star-on'
   | 'key'
+  | 'lock'
 
 interface Props extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   name: IconName
@@ -269,6 +270,12 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <circle cx="8" cy="15" r="4" />
       <path d="m10.9 12.1 8.6-8.6M17 6l2.5 2.5M14.5 8.5 17 11" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="4.5" y="10.5" width="15" height="9.5" rx="2" />
+      <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
     </>
   ),
 }

@@ -11,6 +11,9 @@ export interface Entry {
   mod_time: string
   /** Four octal digits, e.g. "0660". */
   mode: string
+  /** Only set at the `teams` root: whether this user may enter the folder,
+   *  computed from the roster. Absent elsewhere; `false` shows a lock. */
+  accessible?: boolean
 }
 
 export interface Listing {

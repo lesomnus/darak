@@ -66,6 +66,52 @@ func TestSetTeamMembershipThroughController(t *testing.T) {
 	}
 }
 
+// TeamAccess is computed from the roster, not the filesystem: a team is
+// enterable when it is world-open (anonymous), when the user is in the group, or
+// when the user is in one of its reader groups.
+func TestTeamAccess(t *testing.T) {
+	const roster = `{"groups":[
+		{"name":"perception","gid":10001},
+		{"name":"public","gid":19999,"anonymous":"read"},
+		{"name":"simulation","gid":10017,"readers":["simulation-readers"]},
+		{"name":"simulation-readers","gid":10020}
+	],"users":[
+		{"name":"alice","uid":3001,"groups":["perception","simulation-readers"]},
+		{"name":"bob","uid":3002,"groups":["simulation"]}
+	]}`
+	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": roster}}, fakeResolver{})
+
+	// alice: perception member, simulation reader, and public is world-open.
+	got, err := a.TeamAccess(context.Background(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for team, want := range map[string]bool{
+		"perception":         true, // member
+		"simulation-readers": true, // member
+		"simulation":         true, // reader (via simulation-readers)
+		"public":             true, // anonymous read = world-open
+	} {
+		if got[team] != want {
+			t.Errorf("alice access[%q] = %v, want %v", team, got[team], want)
+		}
+	}
+
+	// bob is only a simulation member: perception is closed to him, but the
+	// world-open public still is not, and he is no reader of simulation's peers.
+	got, _ = a.TeamAccess(context.Background(), "bob")
+	for team, want := range map[string]bool{
+		"simulation":         true,  // member
+		"public":             true,  // world-open
+		"perception":         false, // not a member
+		"simulation-readers": false, // not a member — being read BY it is not membership
+	} {
+		if got[team] != want {
+			t.Errorf("bob access[%q] = %v, want %v", team, got[team], want)
+		}
+	}
+}
+
 // fakeRunner answers a fixed script of commands, and records what it was asked.
 type fakeRunner struct {
 	out   map[string]string

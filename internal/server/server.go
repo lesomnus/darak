@@ -387,6 +387,11 @@ type Entry struct {
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"mod_time"`
 	Mode    string    `json:"mode"`
+	// Accessible, when set, says whether this user may enter the folder — filled
+	// only for the `teams` root, from the roster, so the interface can lock the
+	// teams a person cannot open instead of letting them find out by clicking.
+	// Nil means "not computed" (every listing but the teams root), never "no".
+	Accessible *bool `json:"accessible,omitempty"`
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -464,6 +469,19 @@ func (s *Server) listDir(w http.ResponseWriter, r *http.Request, user, p string)
 			row.Dir = e.Stat.Mode&unix.S_IFMT == unix.S_IFDIR
 		}
 		out = append(out, row)
+	}
+	// At the teams root, mark which teams this user may actually enter — computed
+	// from the roster (one read), not by probing each folder. The kernel still
+	// guards entry; this only lets the interface show a lock instead of producing
+	// a permission error on the click.
+	if !s.isAnon(r) && s.cfg.Admin != nil && path.Clean(p) == "teams" {
+		if access, err := s.cfg.Admin.TeamAccess(r.Context(), user); err == nil {
+			for i := range out {
+				if v, ok := access[out[i].Name]; ok {
+					out[i].Accessible = &v
+				}
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"path": p, "entries": out})
 }

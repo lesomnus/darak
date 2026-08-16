@@ -843,6 +843,21 @@ main {
 .row:hover {
   background: var(--hover);
 }
+/* A team the viewer cannot enter (teams root only): dimmed, with a lock beside
+   the name. Still clickable — the kernel is the real gate; this only forecasts
+   it, from the roster, so nobody has to click to find out. */
+.row[data-locked] {
+  color: var(--muted);
+}
+.row[data-locked] .icon {
+  opacity: 0.5;
+}
+.name .lock {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 0.35rem;
+  color: var(--muted);
+}
 .row .icon {
   display: flex;
   align-items: center;
