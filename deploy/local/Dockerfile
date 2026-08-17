@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/darak ./cmd/darak \
 # commit so the image is reproducible, and so a local stack and a prod stack can
 # be put on the same version deliberately rather than by accident.
 FROM golang:1.26-trixie AS usersync
-ARG USERSYNC_VERSION=eaa3a83f50fd50eb987dcc2b01c608d89d045d7d
+ARG USERSYNC_VERSION=c66580554e626338286e04f93d657717fdd00886
 RUN CGO_ENABLED=0 go install -trimpath github.com/lesomnus/usersync@${USERSYNC_VERSION}
 
 FROM debian:trixie-slim
