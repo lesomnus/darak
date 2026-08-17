@@ -70,7 +70,14 @@ FROM debian:trixie-slim AS app
 #             safe direction — older userspace, newer kernel). Both callers treat
 #             zfs as best-effort (darak falls back to du, usersync warns and skips
 #             enforcement), so a missing /dev/zfs degrades rather than breaks.
-RUN apt-get update -qq \
+#
+# ZFS is under the CDDL, so Debian ships zfsutils-linux in `contrib`, not `main`
+# — trixie-slim enables only `main`, so `contrib` is added to the deb822 sources
+# first (the classic sources.list branch is a fallback for other bases).
+RUN ( [ -f /etc/apt/sources.list.d/debian.sources ] \
+		&& sed -i '/^Components:/ s/$/ contrib/' /etc/apt/sources.list.d/debian.sources \
+		|| sed -i 's/ main$/ main contrib/' /etc/apt/sources.list ) \
+	&& apt-get update -qq \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
 		samba samba-common-bin winbind acl attr ca-certificates tzdata curl inotify-tools zfsutils-linux \
 	&& rm -rf /var/lib/apt/lists/* \
