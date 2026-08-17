@@ -71,15 +71,15 @@ func TestSetTeamMembershipThroughController(t *testing.T) {
 // when the user is in one of its reader groups.
 func TestTeamAccess(t *testing.T) {
 	const roster = `{"groups":[
-		{"name":"perception","gid":10001},
+		{"name":"perception","gid":10001,"members":["alice"]},
 		{"name":"public","gid":19999,"anonymous":"read"},
-		{"name":"simulation","gid":10017,"readers":["simulation-readers"]},
-		{"name":"simulation-readers","gid":10020},
+		{"name":"simulation","gid":10017,"readers":["simulation-readers"],"members":["bob"]},
+		{"name":"simulation-readers","gid":10020,"members":["alice"]},
 		{"name":"everyone","gid":10050,"all":true},
 		{"name":"notice","gid":10051,"readers":["everyone"]}
 	],"users":[
-		{"name":"alice","uid":3001,"groups":["perception","simulation-readers"]},
-		{"name":"bob","uid":3002,"groups":["simulation"]}
+		{"name":"alice","uid":3001},
+		{"name":"bob","uid":3002}
 	]}`
 	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": roster}}, fakeResolver{})
 
@@ -530,13 +530,13 @@ func contains(ss []string, want string) bool {
 
 const declJSON = `{
   "groups": [
-    {"name":"team-a","gid":10001,"owners":["alice"]},
-    {"name":"team-b","gid":10002,"owners":[]}
+    {"name":"team-a","gid":10001,"owners":["alice"],"members":["alice"]},
+    {"name":"team-b","gid":10002,"owners":[],"members":["carol"]}
   ],
   "users": [
-    {"name":"alice","uid":3001,"groups":["team-a"],"status":"active"},
-    {"name":"bob","uid":3002,"groups":[],"status":"active"},
-    {"name":"carol","uid":3003,"groups":["team-b"],"status":"active"}
+    {"name":"alice","uid":3001,"status":"active"},
+    {"name":"bob","uid":3002,"status":"active"},
+    {"name":"carol","uid":3003,"status":"active"}
   ]
 }`
 

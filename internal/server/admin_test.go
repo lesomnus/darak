@@ -57,11 +57,11 @@ func adminHarnessWith(t *testing.T, a auth.Authenticator) (*harness, *scriptRunn
 			"usersync export --format csv": "type,name,uid_number,gid_number,unix_home_directory,login_shell\nuser,alice,3001,3001,/homes/alice,/usr/sbin/nologin\nuser,bob,3002,3002,/homes/bob,/usr/sbin/nologin\n",
 			"pdbedit -L -v":                "Unix username:\talice\nAccount Flags:\t[U]\n\nUnix username:\tbob\nAccount Flags:\t[U]\n",
 			"usersync audit --json":        `{"findings":[]}`,
-			"usersync roster": `{"groups":[{"name":"team-a","gid":10001,"owners":["bob"]},` +
+			"usersync roster": `{"groups":[{"name":"team-a","gid":10001,"owners":["bob"],"members":["bob"]},` +
 				`{"name":"team-b","gid":10002,"owners":[]}],` +
-				`"users":[{"name":"alice","uid":3001,"groups":[],"status":"active"},` +
-				`{"name":"bob","uid":3002,"groups":["team-a"],"status":"active"},` +
-				`{"name":"carol","uid":3003,"groups":[],"status":"active"}]}`,
+				`"users":[{"name":"alice","uid":3001,"status":"active"},` +
+				`{"name":"bob","uid":3002,"status":"active"},` +
+				`{"name":"carol","uid":3003,"status":"active"}]}`,
 			"usersync member add alice team-a":    "",
 			"usersync member add carol team-a":    "",
 			"usersync member add carol team-b":    "",

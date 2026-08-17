@@ -39,6 +39,8 @@ type DeclaredGroup struct {
 	GID         uint32   `json:"gid"`
 	Description string   `json:"description,omitempty"`
 	Owners      []string `json:"owners"`
+	// Members are the accounts on the team — membership is declared on the group.
+	Members []string `json:"members,omitempty"`
 	// Readers are other groups whose members may READ this group's folder but not
 	// write it. Used to compute who may enter a team folder without probing the
 	// filesystem — a reader is not a member but can still open it.
@@ -54,11 +56,10 @@ type DeclaredGroup struct {
 }
 
 type DeclaredUser struct {
-	Name     string   `json:"name"`
-	UID      uint32   `json:"uid"`
-	FullName string   `json:"full_name,omitempty"`
-	Groups   []string `json:"groups"`
-	Status   string   `json:"status"`
+	Name     string `json:"name"`
+	UID      uint32 `json:"uid"`
+	FullName string `json:"full_name,omitempty"`
+	Status   string `json:"status"`
 }
 
 // Declaration reads the roster.
@@ -148,20 +149,13 @@ func (a *Admin) TeamAccess(ctx context.Context, user string) (map[string]bool, e
 	if err != nil {
 		return nil, err
 	}
+	// The groups this user is in — membership is declared on the group, so read it
+	// there. An `all` group holds every signed-in user without listing them, so
+	// the caller is in each; folding those in is what lets a folder that reads an
+	// `all` group show as open rather than locked.
 	mine := map[string]bool{}
-	for _, u := range d.Users {
-		if u.Name == user {
-			for _, g := range u.Groups {
-				mine[g] = true
-			}
-			break
-		}
-	}
-	// Every active user belongs to the `all` groups without the roster listing it,
-	// so the caller — a signed-in user — is in each. Folding them in here is what
-	// lets a folder that reads an `all` group show as open rather than locked.
 	for _, g := range d.Groups {
-		if g.All {
+		if g.All || slices.Contains(g.Members, user) {
 			mine[g.Name] = true
 		}
 	}
@@ -456,10 +450,15 @@ func (a *Admin) ManageableTeams(ctx context.Context, actor string) (*TeamsView, 
 		if !admin && !slices.Contains(g.Owners, actor) {
 			continue
 		}
-		members := []string{}
-		for _, u := range d.Users {
-			if slices.Contains(u.Groups, g.Name) {
-				members = append(members, u.Name)
+		// Membership is declared on the group. An `all` group's members are every
+		// active account, filled in here so the panel shows them rather than an
+		// empty team the roster maintains implicitly.
+		members := append([]string{}, g.Members...)
+		if g.All {
+			for _, u := range d.Users {
+				if u.Status != "reserved" {
+					members = append(members, u.Name)
+				}
 			}
 		}
 		slices.Sort(members)
