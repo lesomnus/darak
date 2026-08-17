@@ -74,7 +74,9 @@ func TestTeamAccess(t *testing.T) {
 		{"name":"perception","gid":10001},
 		{"name":"public","gid":19999,"anonymous":"read"},
 		{"name":"simulation","gid":10017,"readers":["simulation-readers"]},
-		{"name":"simulation-readers","gid":10020}
+		{"name":"simulation-readers","gid":10020},
+		{"name":"everyone","gid":10050,"all":true},
+		{"name":"notice","gid":10051,"readers":["everyone"]}
 	],"users":[
 		{"name":"alice","uid":3001,"groups":["perception","simulation-readers"]},
 		{"name":"bob","uid":3002,"groups":["simulation"]}
@@ -91,6 +93,8 @@ func TestTeamAccess(t *testing.T) {
 		"simulation-readers": true, // member
 		"simulation":         true, // reader (via simulation-readers)
 		"public":             true, // anonymous read = world-open
+		"everyone":           true, // an `all` group holds every signed-in user
+		"notice":             true, // reads the `all` group, so open to alice too
 	} {
 		if got[team] != want {
 			t.Errorf("alice access[%q] = %v, want %v", team, got[team], want)
@@ -103,6 +107,7 @@ func TestTeamAccess(t *testing.T) {
 	for team, want := range map[string]bool{
 		"simulation":         true,  // member
 		"public":             true,  // world-open
+		"notice":             true,  // reads the `all` group, which holds bob too
 		"perception":         false, // not a member
 		"simulation-readers": false, // not a member — being read BY it is not membership
 	} {

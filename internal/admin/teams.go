@@ -43,6 +43,10 @@ type DeclaredGroup struct {
 	// write it. Used to compute who may enter a team folder without probing the
 	// filesystem — a reader is not a member but can still open it.
 	Readers []string `json:"readers,omitempty"`
+	// All marks a group that contains every active user (usersync maintains the
+	// membership). A registered user is implicitly in it, which is how a folder
+	// that reads it via `readers` is open to everyone signed in but not anonymous.
+	All bool `json:"all,omitempty"`
 	// Anonymous is the folder's unauthenticated-access level: "none", "read", or
 	// "write". It is what tells the interface a folder is public, so an anonymous
 	// visitor can be shown where to look; the kernel still enforces the access.
@@ -151,6 +155,14 @@ func (a *Admin) TeamAccess(ctx context.Context, user string) (map[string]bool, e
 				mine[g] = true
 			}
 			break
+		}
+	}
+	// Every active user belongs to the `all` groups without the roster listing it,
+	// so the caller — a signed-in user — is in each. Folding them in here is what
+	// lets a folder that reads an `all` group show as open rather than locked.
+	for _, g := range d.Groups {
+		if g.All {
+			mine[g.Name] = true
 		}
 	}
 	out := make(map[string]bool, len(d.Groups))
