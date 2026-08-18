@@ -88,6 +88,49 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions_closed": closed})
 }
 
+// handleMyInitialPassword shows the CALLER their own seed-derived initial
+// password — but only while it is still the initial one.
+//
+// It is the self-service twin of the admin reveal (handleAdminInitialPassword):
+// an SSO user who signed in on the web but never had their SMB password can get
+// it without an operator. The value is verified against the credential store
+// first for the same reason the admin path verifies it — usersync recomputes the
+// initial value forever with no idea whether the person has changed theirs, so a
+// still-initial check is what keeps the answer either true or absent. Someone who
+// HAS changed theirs is told there is nothing to show: tdbsam holds an NT hash it
+// never gives back, and a chosen password is never disclosed. The exposure is
+// bounded to a credential the user was already handed once and left unchanged —
+// changing it is the button right next to this one.
+func (s *Server) handleMyInitialPassword(w http.ResponseWriter, r *http.Request) {
+	// InitialPassword lives on the Admin surface (seed + usersync); without it
+	// there is nothing to derive from, so the route is absent rather than empty.
+	if s.cfg.Admin == nil {
+		http.NotFound(w, r)
+		return
+	}
+	user := userOf(r)
+	password, err := s.cfg.Admin.InitialPassword(r.Context(), user)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "초기 비밀번호를 계산할 수 없습니다: "+err.Error())
+		return
+	}
+	ok, err := s.cfg.Auth.Authenticate(r.Context(), user, password)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "지금 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+		return
+	}
+	// Disclosure of a credential — logged, like the admin reveal, since it hands
+	// over a way in rather than changing one.
+	slog.Info("initial password self-revealed", "user", user, "still_initial", ok)
+	// A credential must not sit in a proxy or a browser cache.
+	w.Header().Set("Cache-Control", "no-store")
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"still_initial": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"still_initial": true, "password": password})
+}
+
 // passwordRuleText turns a rule into something worth reading.
 //
 // The rules are few enough to state in full, which is better than a rejection

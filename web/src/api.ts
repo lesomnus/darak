@@ -124,6 +124,11 @@ export const api = {
       body: { current, new: next },
     }),
 
+  // The caller's own seed-derived initial password — returned only while it is
+  // still the initial one (still_initial=false once they have changed it).
+  myInitialPassword: () =>
+    request<{ still_initial: boolean; password?: string }>('/api/password/initial'),
+
   login: (user: string, password: string) =>
     request<Me>('/api/login', { method: 'POST', body: { user, password } }),
 

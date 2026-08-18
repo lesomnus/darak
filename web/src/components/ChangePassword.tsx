@@ -31,6 +31,19 @@ export function ChangePassword({
   const [again, setAgain] = useState('')
   const [busy, setBusy] = useState(false)
   const [closed, setClosed] = useState<number | null>(null)
+  const [initial, setInitial] = useState<{ still_initial: boolean; password?: string } | null>(null)
+  const [revealing, setRevealing] = useState(false)
+
+  async function reveal() {
+    setRevealing(true)
+    try {
+      setInitial(await api.myInitialPassword())
+    } catch (err) {
+      onError(err instanceof Error ? err.message : '초기 비밀번호를 가져오지 못했습니다.')
+    } finally {
+      setRevealing(false)
+    }
+  }
 
   const mismatch = again.length > 0 && next !== again
   const tooShort = next.length > 0 && next.length < MIN_LENGTH
@@ -114,6 +127,34 @@ export function ChangePassword({
                 새 비밀번호가 서로 다릅니다.
               </p>
             )}
+
+            {/* Self-service reveal of the seed-derived initial password, for
+                someone who signed in with the company account and never received
+                their SMB password. Only shown while it is still the initial one;
+                a chosen password is never disclosed. */}
+            <div className="initial-pw">
+              {initial === null ? (
+                <button
+                  type="button"
+                  className="ghost small"
+                  onClick={() => void reveal()}
+                  disabled={revealing}
+                >
+                  {revealing ? '확인 중…' : '내 초기 비밀번호 보기'}
+                </button>
+              ) : initial.still_initial ? (
+                <p className="muted small">
+                  초기 비밀번호(아직 안 바꿈): <code>{initial.password}</code>
+                  <br />
+                  탐색기(SMB) 마운트에 이 값을 쓰거나, 위에서 지금 바꾸세요. 세션이 새면 이 값이
+                  노출되니 바꾸는 것을 권장합니다.
+                </p>
+              ) : (
+                <p className="muted small">
+                  이미 비밀번호를 바꿨습니다 — 보여줄 초기 비밀번호가 없습니다.
+                </p>
+              )}
+            </div>
 
             <div className="dialog-actions">
               <button type="button" className="ghost" onClick={onClose}>

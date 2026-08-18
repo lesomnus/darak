@@ -1388,6 +1388,17 @@ dialog menu {
   margin: 1.25rem 0 0;
 }
 
+/* Self-service initial-password reveal, set off from the change form above it. */
+.initial-pw {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.initial-pw code {
+  font-size: var(--t-sm);
+  user-select: all;
+}
+
 .share-item {
   padding: 0.75rem 0;
   border-top: 1px solid var(--line);

@@ -192,6 +192,10 @@ func (s *Server) Handler() http.Handler {
 	// bearer token, and one that leaks must not be enough to take an account
 	// away from the person who owns it.
 	mux.HandleFunc("POST /api/password", s.authed(s.handlePassword))
+	// Self-service reveal of the caller's OWN seed-derived initial password, only
+	// while still initial — the self-service twin of the admin reveal, for an SSO
+	// user who never received their SMB password.
+	mux.HandleFunc("GET /api/password/initial", s.authed(s.handleMyInitialPassword))
 
 	// The sign-on routes take no session — they are how one is obtained — and
 	// answer 404 when no provider is configured, so a deployment without it looks
