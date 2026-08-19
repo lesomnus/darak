@@ -8,15 +8,13 @@
 #
 # Build context is the repository root.
 
-# A commit, not a tag, and not @latest — because usersync has neither published
-# yet. Its default branch on GitHub is still the template scaffold (it declares
-# a different module path, so @latest does not even resolve), and the branch
-# carrying the real code cannot be named here: go install refuses a version
-# string containing a slash.
+# A commit on usersync's main, not a tag — because usersync has not published a
+# tag yet, and @latest would resolve to whatever main is at build time rather
+# than a reviewed point. This pin carries `usersync watch` and the --nss-only
+# mode, which deploy/web/entrypoint.sh depends on.
 #
-# Replace this with a tag the moment usersync publishes one. Pinning an image to
-# a commit on an unmerged branch is a thing to fix, not a thing to keep.
-ARG USERSYNC_VERSION=1f662f4a8588c78282008e85b52b0cba807bc8c5
+# Replace this with a tag the moment usersync publishes one.
+ARG USERSYNC_VERSION=537b61bc7f447a9f0b6cf09ee4afadb816c75438
 
 FROM golang:1.26-trixie AS build
 WORKDIR /src
@@ -99,6 +97,45 @@ RUN chmod 0755 /usr/local/bin/darak /usr/local/bin/darak-helper \
 # 8080 web, 445 SMB. With host networking neither is published; both are the
 # host's own ports.
 EXPOSE 8080 445
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+	CMD curl -fsS -o /dev/null -k "${DARAK_HEALTH_URL:-http://localhost:8080/}"
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+
+
+# The WEB-ONLY image (deploy/web): darak plus the samba CLIENTS it drives, and
+# NO smbd. It reuses the same build/test/usersync stages as `app` above — the
+# same binaries and the same pinned usersync — and differs only in what it
+# installs and runs. Published as a SEPARATE image (docker-bake.hcl `web`) so a
+# darak or UI change redeploys only this pod and never bounces the SMB server,
+# which now lives in the usersync-smb image with its own reconcile loop.
+FROM debian:trixie-slim AS app-web
+
+# Same recipe as `app` MINUS inotify-tools — the bash roster watcher, replaced
+# here by `usersync watch --nss-only`. `samba` is kept even though smbd never
+# starts: it is the only package that ships pdbedit, which darak's SSO gate reads
+# to enforce `status: disabled` from tdbsam (winbind gives ntlm_auth + winbindd,
+# samba-common-bin gives smbpasswd). See `app` above for the contrib/zfs notes
+# and why the distro's own smb.conf is removed.
+RUN ( [ -f /etc/apt/sources.list.d/debian.sources ] \
+		&& sed -i '/^Components:/ s/$/ contrib/' /etc/apt/sources.list.d/debian.sources \
+		|| sed -i 's/ main$/ main contrib/' /etc/apt/sources.list ) \
+	&& apt-get update -qq \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+		samba samba-common-bin winbind acl attr ca-certificates tzdata curl zfsutils-linux \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& rm -f /etc/samba/smb.conf
+
+COPY --from=build /out/darak /out/darak-helper /usr/local/bin/
+COPY --from=usersync /go/bin/usersync /usr/local/bin/usersync
+COPY deploy/web/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/darak /usr/local/bin/darak-helper \
+	/usr/local/bin/usersync /usr/local/bin/entrypoint.sh
+
+# 8080 web only. The SMB pod owns 445.
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 	CMD curl -fsS -o /dev/null -k "${DARAK_HEALTH_URL:-http://localhost:8080/}"

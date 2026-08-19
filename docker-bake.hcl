@@ -99,3 +99,33 @@ target "app" {
     "${REPO}:${BUILD_DATE}-${BUILD_ID}",
   ]
 }
+
+# The web-only image: darak + the samba clients it drives, no smbd. Same
+# Dockerfile and the same build/usersync stages as `app`, a different final
+# stage (app-web) and a SEPARATE image name so its digest pins independently of
+# the SMB server (ghcr.io/lesomnus/usersync-smb) — a darak/UI release then
+# Recreates only the web deployment. Build/push it with:
+#   docker buildx bake web
+target "web" {
+  dockerfile = "deploy/prod/Dockerfile"
+  target     = "app-web"
+  platforms  = ["${PLATFORMS}"]
+
+  # USERSYNC_VERSION is pinned in the Dockerfile (see `app`); not repeated here.
+
+  labels = {
+    "org.opencontainers.image.title"       = "darak-web",
+    "org.opencontainers.image.description" = "darak web tier: UI + API over the shared POSIX tree; SMB served separately",
+    "org.opencontainers.image.source"      = "https://github.com/lesomnus/darak",
+    "org.opencontainers.image.revision"    = "${BUILD_HASH}",
+    "org.opencontainers.image.version"     = "${APP_VERSION}",
+    "org.opencontainers.image.licenses"    = "MIT",
+  }
+
+  tags = [
+    "${REPO}-web:${TAG}",
+    "${REPO}-web:${BUILD_ID}",
+    "${REPO}-web:${BUILD_DATE}",
+    "${REPO}-web:${BUILD_DATE}-${BUILD_ID}",
+  ]
+}

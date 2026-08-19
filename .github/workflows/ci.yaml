@@ -11,6 +11,7 @@ on:
       - cmd/**
       - deploy/prod/Dockerfile
       - deploy/prod/entrypoint.sh
+      - deploy/web/**
       - docker-bake.hcl
       - Dockerfile.test
       - go.mod
@@ -73,6 +74,7 @@ jobs:
     # somebody else's build.
     outputs:
       digest: ${{ steps.push.outputs.metadata && fromJSON(steps.push.outputs.metadata)['app']['containerimage.digest'] }}
+      web-digest: ${{ steps.push.outputs.metadata && fromJSON(steps.push.outputs.metadata)['web']['containerimage.digest'] }}
 
     env:
       TAG: edge
@@ -116,18 +118,24 @@ jobs:
         with:
           source: .
           files: docker-bake.hcl
-          targets: app
+          # app = the combined image (retiring after the two-Deployment cutover);
+          # web = the darak web tier, pushed as ghcr.io/lesomnus/darak-web with an
+          # independent digest so a web release does not touch the SMB pod. They
+          # share the build/usersync stages, so the second is nearly free.
+          targets: app,web
           push: true
           set: |
             app.cache-from=type=gha,scope=app
+            web.cache-from=type=gha,scope=app
 
       - name: Summary
         if: steps.push.outcome == 'success'
         run: |
           {
-            echo "| | |"
+            echo "| image | digest |"
             echo "|---|---|"
-            echo "| image | \`ghcr.io/${{ github.repository }}:edge\` |"
-            echo "| digest | \`${{ fromJSON(steps.push.outputs.metadata)['app']['containerimage.digest'] }}\` |"
-            echo "| revision | \`${{ github.sha }}\` |"
+            echo "| \`ghcr.io/${{ github.repository }}:edge\` | \`${{ fromJSON(steps.push.outputs.metadata)['app']['containerimage.digest'] }}\` |"
+            echo "| \`ghcr.io/${{ github.repository }}-web:edge\` | \`${{ fromJSON(steps.push.outputs.metadata)['web']['containerimage.digest'] }}\` |"
+            echo ""
+            echo "revision \`${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
