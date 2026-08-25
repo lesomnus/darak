@@ -27,6 +27,7 @@ export function FileRow({
   onDelete,
   onToggleFavourite,
   onChmod,
+  onRename,
 }: {
   row: Row
   inTrash: boolean
@@ -37,6 +38,7 @@ export function FileRow({
   onDelete: () => void
   onToggleFavourite: () => void
   onChmod: () => void
+  onRename: () => void
 }) {
   const entry = row.entry
   // Whether this row's dropdown machinery has been built yet, and whether it is
@@ -182,9 +184,15 @@ export function FileRow({
                     {favourite ? '즐겨찾기에서 빼기' : '즐겨찾기'}
                   </Menu.Item>
                 )}
-                {/* Not in the trash: changing the mode of something on its way
-                    out is busywork, and the trash is the one place where the
-                    answer to "who can read this" stopped mattering. */}
+                {/* Not in the trash: renaming or re-permissioning something on
+                    its way out is busywork, and the trash is the one place where
+                    the answer to "who can read this" stopped mattering. */}
+                {!inTrash && (
+                  <Menu.Item className="menu-item" onSelect={onRename}>
+                    <Icon name="pencil" size={18} />
+                    이름 변경
+                  </Menu.Item>
+                )}
                 {!inTrash && (
                   <Menu.Item className="menu-item" onSelect={onChmod}>
                     <Icon name="key" size={18} />

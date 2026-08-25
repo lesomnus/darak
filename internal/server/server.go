@@ -220,6 +220,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/files/", s.authedOrAnon(s.handlePut))
 	mux.HandleFunc("DELETE /api/files/", s.authedOrAnon(s.handleDelete))
 	mux.HandleFunc("POST /api/dirs/", s.authedOrAnon(s.handleMkdir))
+	mux.HandleFunc("POST /api/rename/", s.authedOrAnon(s.handleRename))
 	mux.HandleFunc("GET /api/mode/", s.authedOrAnon(s.handleModeInfo))
 	// Changing a mode is an ownership act, not a file op: kept to signed-in users
 	// so an anonymous visitor cannot re-permission a public folder's contents.
@@ -621,6 +622,60 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRename changes a file or directory's last path component — a rename in
+// place. The body carries a bare new name, and the destination is always the
+// SAME directory, so a rename can never move a file into another folder or a
+// different permission domain. The trailing slash keeps the source path in the
+// URL, like the other file ops.
+//
+// POST /api/rename/<path>  {"name": "새-이름.txt"}
+func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
+	user, p := userOf(r), requestPath(r, "/api/rename/")
+	if p == "" {
+		writeError(w, http.StatusBadRequest, "no path")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if !validRenameName(name) {
+		writeError(w, http.StatusBadRequest, `이름에 "/"를 넣거나 ".", ".."로 지을 수 없습니다`)
+		return
+	}
+	dst := path.Join(path.Dir(p), name)
+	if dst == p {
+		// Renaming to the current name is a no-op, not an error.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.cfg.FS.Move(r.Context(), user, p, dst); err != nil {
+		writeFSError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// validRenameName reports whether s is a single path component safe to rename
+// to: a non-empty basename, not a directory dot-name, with no separator or NUL,
+// and not a hidden partial-upload name. A slash (or "..") would let a rename
+// move the file elsewhere; the helper would still confine it to the domain, but
+// this is meant to be a pure rename, so it is refused before it reaches the
+// filesystem. Rejecting the temp prefix stops a rename from hiding a file the
+// listing would otherwise show.
+func validRenameName(s string) bool {
+	if s == "" || s == "." || s == ".." || len(s) > 255 {
+		return false
+	}
+	if strings.ContainsAny(s, "/\x00") {
+		return false
+	}
+	return !vfs.IsTempName(s)
 }
 
 // handleModeInfo answers what the mode dialog needs to warn accurately.

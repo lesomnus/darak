@@ -51,6 +51,7 @@ export type IconName =
   | 'star-on'
   | 'key'
   | 'lock'
+  | 'pencil'
 
 interface Props extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   name: IconName
@@ -87,6 +88,7 @@ export function Icon({ name, size = 20, className, ...rest }: Props) {
 
 const PATHS: Record<IconName, ReactNode> = {
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  pencil: <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />,
   file: (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

@@ -187,6 +187,21 @@ export function Browser({
     }
   }
 
+  async function rename(entry: Entry) {
+    // Prefilled with the current name so a small edit is a small gesture; the
+    // server keeps it in this folder, so this only ever changes the name.
+    const answer = prompt('새 이름', entry.name)
+    if (answer === null) return
+    const next = answer.trim()
+    if (!next || next === entry.name) return
+    try {
+      await api.rename(path + '/' + entry.name, next)
+      await reload()
+    } catch (e) {
+      onError(e instanceof Error ? e.message : '이름을 바꾸지 못했습니다.')
+    }
+  }
+
   function openTrash() {
     const domain = domainRoot(path)
     if (!domain) {
@@ -355,6 +370,7 @@ export function Browser({
                   onDelete={() => void remove(entry)}
                   onToggleFavourite={() => onToggleFavourite(child)}
                   onChmod={() => setChmodding({ path: child, entry })}
+                  onRename={() => void rename(entry)}
                 />
               )
             })}

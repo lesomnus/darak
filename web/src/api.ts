@@ -42,6 +42,10 @@ function dirsUrl(path: string): string {
   return '/api/dirs/' + path.split('/').map(encodeURIComponent).join('/')
 }
 
+function renameUrl(path: string): string {
+  return '/api/rename/' + path.split('/').map(encodeURIComponent).join('/')
+}
+
 /**
  * Turns the server's answer into something a person can act on.
  *
@@ -143,6 +147,14 @@ export const api = {
   remove: (path: string) => request<void>(filesUrl(path), { method: 'DELETE' }),
 
   mkdir: (path: string) => request<void>(dirsUrl(path), { method: 'POST' }),
+
+  /**
+   * Rename in place. `name` is a bare new basename; the server keeps the file in
+   * the same directory, so this can only change what it is called, never move it.
+   * A name already taken fails (409) rather than overwriting.
+   */
+  rename: (path: string, name: string) =>
+    request<void>(renameUrl(path), { method: 'POST', body: { name } }),
 
   /**
    * Walks below `path` and yields the names that match, as they are found.
