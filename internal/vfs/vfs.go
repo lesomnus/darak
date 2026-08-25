@@ -219,6 +219,38 @@ func (f *FS) Chmod(ctx context.Context, user, p string, mode uint32) error {
 	return nil
 }
 
+// Move renames from -> to. It never replaces an existing name at the
+// destination: RENAME_NOREPLACE is the same guard the trash relies on, so a
+// rename onto a name that is already taken fails with EEXIST (409) rather than
+// silently destroying what was there. Both paths must sit in the same permission
+// domain, so a rename can change a file's NAME but never carry it somewhere with
+// different access than where it was; the caller additionally keeps a rename
+// within one directory.
+func (f *FS) Move(ctx context.Context, user, from, to string) error {
+	fromDomain, err := DomainRoot(from)
+	if err != nil {
+		return err
+	}
+	toDomain, err := DomainRoot(to)
+	if err != nil {
+		return err
+	}
+	if fromDomain != toDomain {
+		return fmt.Errorf("vfs: cannot move %q out of %q into %q", from, fromDomain, toDomain)
+	}
+	resp, _, err := f.do(ctx, user, &wire.Request{
+		Op: wire.OpRename, Path: from, Path2: to, Flags: unix.RENAME_NOREPLACE,
+	})
+	if err != nil {
+		return err
+	}
+	if err := errnoOf("rename", from, resp.Errno); err != nil {
+		return err
+	}
+	f.note(user, "rename", from, to)
+	return nil
+}
+
 // mkdir is Mkdir without the activity record, for the directories this package
 // creates on its own account.
 func (f *FS) mkdir(ctx context.Context, user, p string, mode uint32) error {

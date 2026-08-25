@@ -887,3 +887,72 @@ func execLookPath(name string) (string, error) { return exec.LookPath(name) }
 func setfaclCmd(path, spec string) error {
 	return exec.Command("setfacl", "-m", spec, path).Run()
 }
+
+func TestRename(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	c := h.login("alice")
+	mk := func(rel, data string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(h.root, rel), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func(rel string) bool {
+		_, err := os.Stat(filepath.Join(h.root, rel))
+		return err == nil
+	}
+
+	t.Run("renames a file in place", func(t *testing.T) {
+		mk("homes/alice/report.txt", "hi")
+		rec := h.do("POST", "/api/rename/homes/alice/report.txt", strings.NewReader(`{"name":"renamed.txt"}`), c)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("got %d %s", rec.Code, rec.Body)
+		}
+		if exists("homes/alice/report.txt") || !exists("homes/alice/renamed.txt") {
+			t.Fatal("the file was not renamed on disk")
+		}
+	})
+
+	t.Run("renames a directory", func(t *testing.T) {
+		if err := os.Mkdir(filepath.Join(h.root, "homes/alice/olddir"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		rec := h.do("POST", "/api/rename/homes/alice/olddir", strings.NewReader(`{"name":"newdir"}`), c)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("got %d %s", rec.Code, rec.Body)
+		}
+		if exists("homes/alice/olddir") || !exists("homes/alice/newdir") {
+			t.Fatal("the directory was not renamed")
+		}
+	})
+
+	// A slash (or "..") in the new name would move the file elsewhere; it must be
+	// refused before the filesystem is touched at all.
+	t.Run("a name with a separator is refused and touches nothing", func(t *testing.T) {
+		mk("homes/alice/keep.txt", "x")
+		rec := h.do("POST", "/api/rename/homes/alice/keep.txt", strings.NewReader(`{"name":"../escape.txt"}`), c)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("got %d, want 400", rec.Code)
+		}
+		if !exists("homes/alice/keep.txt") || exists("homes/alice/escape.txt") {
+			t.Fatal("a refused rename must leave the file exactly where it was")
+		}
+	})
+
+	// RENAME_NOREPLACE: a rename onto a name already taken must fail loudly, not
+	// silently destroy what was there.
+	t.Run("refuses to overwrite an existing name", func(t *testing.T) {
+		mk("homes/alice/a.txt", "aaa")
+		mk("homes/alice/b.txt", "bbb")
+		rec := h.do("POST", "/api/rename/homes/alice/a.txt", strings.NewReader(`{"name":"b.txt"}`), c)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("got %d, want 409", rec.Code)
+		}
+		if got, _ := os.ReadFile(filepath.Join(h.root, "homes/alice/b.txt")); string(got) != "bbb" {
+			t.Fatalf("b.txt was clobbered by the refused rename: %q", got)
+		}
+		if !exists("homes/alice/a.txt") {
+			t.Fatal("a.txt should be untouched after a refused rename")
+		}
+	})
+}
