@@ -75,7 +75,7 @@ func TestTeamAccess(t *testing.T) {
 		{"name":"public","gid":19999,"anonymous":"read"},
 		{"name":"simulation","gid":10017,"readers":["simulation-readers"],"members":["bob"]},
 		{"name":"simulation-readers","gid":10020,"members":["alice"]},
-		{"name":"everyone","gid":10050,"all":true},
+		{"name":"everyone","gid":10050,"all":true,"members":["alice","bob"]},
 		{"name":"notice","gid":10051,"readers":["everyone"]}
 	],"users":[
 		{"name":"alice","uid":3001},
@@ -93,7 +93,7 @@ func TestTeamAccess(t *testing.T) {
 		"simulation-readers": true, // member
 		"simulation":         true, // reader (via simulation-readers)
 		"public":             true, // anonymous read = world-open
-		"everyone":           true, // an `all` group holds every signed-in user
+		"everyone":           true, // `all` group, resolved by usersync to its cohort
 		"notice":             true, // reads the `all` group, so open to alice too
 	} {
 		if got[team] != want {

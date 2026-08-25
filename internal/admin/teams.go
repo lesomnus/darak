@@ -45,9 +45,10 @@ type DeclaredGroup struct {
 	// write it. Used to compute who may enter a team folder without probing the
 	// filesystem — a reader is not a member but can still open it.
 	Readers []string `json:"readers,omitempty"`
-	// All marks a group that contains every active user (usersync maintains the
-	// membership). A registered user is implicitly in it, which is how a folder
-	// that reads it via `readers` is open to everyone signed in but not anonymous.
+	// All is a hint that this is an `all` group (every active user, or a profile
+	// cohort). Its concrete membership is already resolved into Members by
+	// `usersync roster`, so this is informational only — the access and panel logic
+	// read Members, not this flag.
 	All bool `json:"all,omitempty"`
 	// Anonymous is the folder's unauthenticated-access level: "none", "read", or
 	// "write". It is what tells the interface a folder is public, so an anonymous
@@ -155,7 +156,10 @@ func (a *Admin) TeamAccess(ctx context.Context, user string) (map[string]bool, e
 	// `all` group show as open rather than locked.
 	mine := map[string]bool{}
 	for _, g := range d.Groups {
-		if g.All || slices.Contains(g.Members, user) {
+		// `usersync roster` resolves an `all` group to its concrete cohort in
+		// Members, so membership is one contains check — no need to special-case
+		// `all` here (and doing so would wrongly treat `all: <profile>` as everyone).
+		if slices.Contains(g.Members, user) {
 			mine[g.Name] = true
 		}
 	}
@@ -450,17 +454,10 @@ func (a *Admin) ManageableTeams(ctx context.Context, actor string) (*TeamsView, 
 		if !admin && !slices.Contains(g.Owners, actor) {
 			continue
 		}
-		// Membership is declared on the group. An `all` group's members are every
-		// active account, filled in here so the panel shows them rather than an
-		// empty team the roster maintains implicitly.
+		// Membership is declared on the group; `usersync roster` already resolves an
+		// `all` group to its concrete cohort (every active user, or a profile's
+		// cohort) in Members, so the panel shows that list without re-expanding here.
 		members := append([]string{}, g.Members...)
-		if g.All {
-			for _, u := range d.Users {
-				if u.Status != "reserved" {
-					members = append(members, u.Name)
-				}
-			}
-		}
 		slices.Sort(members)
 		view.Teams = append(view.Teams, TeamView{
 			Name:        g.Name,
