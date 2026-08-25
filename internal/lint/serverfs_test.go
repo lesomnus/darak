@@ -103,6 +103,8 @@ const localStateMarker = "//darak:local-state"
 //	internal/identity/file.go    the SSO mapping and its approval queue, two flags
 //	internal/sso/secret.go       the OIDC client secret, read once at startup
 //	internal/provision/file.go   the provisioning rules and the token they send
+//	internal/server/epoch.go     the session-epoch file + the cookie-signing key,
+//	                             both operator-supplied paths for server-owned state
 //
 // The fifth is the weakest of the five and still clears the bar: it resolves a
 // path INSIDE package server, which is where the rule bites hardest. What saves
@@ -145,7 +147,7 @@ const localStateMarker = "//darak:local-state"
 // Anything that reads a user's file, or resolves a name a request supplied,
 // does not qualify however convenient the marker would be. That is the case the
 // helper exists for.
-const maxExempt = 8
+const maxExempt = 9
 
 func repoRoot(t *testing.T) string {
 	t.Helper()

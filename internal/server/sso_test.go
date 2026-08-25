@@ -116,7 +116,7 @@ func ssoServer(t *testing.T) *Server {
 	t.Helper()
 	return &Server{
 		cfg:      Config{Identities: identity.NewStore(), Pending: identity.NewQueue()},
-		sessions: NewSessions(time.Hour),
+		sessions: NewSessions(time.Hour, nil, nil),
 		flows:    sso.NewFlows(),
 		notices:  newNotices(),
 		enroll:   newEnrollTracker(),

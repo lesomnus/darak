@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -41,12 +42,13 @@ func (f authFunc) Authenticate(_ context.Context, user, password string) (bool, 
 
 func passwordServer(t *testing.T, a auth.Authenticator, runner *recordingRunner) *Server {
 	t.Helper()
+	ep := newEpochStore(filepath.Join(t.TempDir(), "epochs.json"))
 	return &Server{
 		cfg: Config{
 			Auth:      a,
 			Passwords: &auth.PasswordStore{Runner: runner, Path: "smbpasswd"},
 		},
-		sessions: NewSessions(time.Hour),
+		sessions: NewSessions(time.Hour, []byte("test-key-test-key-test-key-test!"), ep),
 	}
 }
 
@@ -161,14 +163,24 @@ func TestPasswordChangeClosesOtherSessions(t *testing.T) {
 	mine, _ := s.sessions.Create("alice")
 	elsewhere, _ := s.sessions.Create("alice")
 	somebodyElse, _ := s.sessions.Create("bob")
+	time.Sleep(2 * time.Millisecond) // the sessions predate the change's epoch
 
 	w := change(t, s, "alice", mine, "old-password", "a-new-password")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body)
 	}
 
-	if _, ok := s.sessions.Lookup(mine); !ok {
-		t.Error("the session the change was made from was closed")
+	// The change closes every alice token issued before it — including the one it
+	// was made from. The caller keeps their session through the cookie the response
+	// re-issues, which is what the browser sends next.
+	reissued := ""
+	for _, c := range w.Result().Cookies() {
+		if c.Name == CookieName {
+			reissued = c.Value
+		}
+	}
+	if u, ok := s.sessions.Lookup(reissued); !ok || u != "alice" {
+		t.Errorf("the response did not re-issue a working session: %q %v", u, ok)
 	}
 	if _, ok := s.sessions.Lookup(elsewhere); ok {
 		t.Error("another session of the same person survived")
@@ -181,7 +193,7 @@ func TestPasswordChangeClosesOtherSessions(t *testing.T) {
 // A deployment that cannot reach smbpasswd should not offer the route at all,
 // rather than offer it and fail.
 func TestPasswordRouteIsAbsentWithoutAStore(t *testing.T) {
-	s := &Server{cfg: Config{Auth: fakeAuth{ok: true}}, sessions: NewSessions(time.Hour)}
+	s := &Server{cfg: Config{Auth: fakeAuth{ok: true}}, sessions: NewSessions(time.Hour, nil, nil)}
 	if got := change(t, s, "alice", "", "old-password", "a-new-password").Code; got != http.StatusNotFound {
 		t.Errorf("status = %d; want 404", got)
 	}

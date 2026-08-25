@@ -476,62 +476,100 @@ func TestErrnoToStatus(t *testing.T) {
 	}
 }
 
-func TestLogoutInvalidatesTheSession(t *testing.T) {
+func TestLogoutClearsTheCookie(t *testing.T) {
 	h := newHarness(t, fakeAuth{ok: true})
 	c := h.login("alice")
 
 	if rec := h.do("GET", "/api/whoami", nil, c); rec.Code != http.StatusOK {
 		t.Fatalf("whoami before logout: %d", rec.Code)
 	}
-	if rec := h.do("POST", "/api/logout", nil, c); rec.Code != http.StatusNoContent {
+	rec := h.do("POST", "/api/logout", nil, c)
+	if rec.Code != http.StatusNoContent {
 		t.Fatalf("logout: %d", rec.Code)
 	}
-	// Sessions are held server-side precisely so this is immediate: a signed
-	// token the server could not revoke would keep working until it expired,
-	// which would quietly undo the "disable the account and both paths close"
-	// property the whole design leans on.
-	if rec := h.do("GET", "/api/whoami", nil, c); rec.Code != http.StatusUnauthorized {
-		t.Errorf("whoami after logout = %d, want 401", rec.Code)
+	// A signed cookie holds no server-side state to revoke, so logout's job is to
+	// clear the browser's cookie: the response must send a Set-Cookie that expires
+	// it. A token a client chooses to KEEP stays valid until its TTL — that is the
+	// one thing a stateless session gives up, bounded by HttpOnly/Secure and the
+	// TTL rather than by a table the server could empty.
+	cleared := false
+	for _, sc := range rec.Result().Cookies() {
+		if sc.Name == CookieName && sc.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("logout did not send a cookie-clearing Set-Cookie")
 	}
 }
 
-func TestSessionsExpireAndAreSwept(t *testing.T) {
-	s := NewSessions(20 * time.Millisecond)
-	token, err := s.Create("alice")
+func TestSessionExpiry(t *testing.T) {
+	s := NewSessions(20*time.Millisecond, nil, nil)
+	tok, err := s.Create("alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u, ok := s.Lookup(token); !ok || u != "alice" {
-		t.Fatalf("lookup = %q %v", u, ok)
+	if u, ok := s.Lookup(tok); !ok || u != "alice" {
+		t.Fatalf("fresh lookup = %q %v", u, ok)
 	}
 	time.Sleep(40 * time.Millisecond)
-	if _, ok := s.Lookup(token); ok {
-		t.Error("an expired session must not resolve")
-	}
-
-	other, _ := s.Create("bob")
-	time.Sleep(40 * time.Millisecond)
-	s.Sweep()
-	if s.Len() != 0 {
-		t.Errorf("Len = %d, want 0 after a sweep", s.Len())
-	}
-	if _, ok := s.Lookup(other); ok {
-		t.Error("swept session still resolves")
+	if _, ok := s.Lookup(tok); ok {
+		t.Error("an expired token must not verify")
 	}
 }
 
-func TestTokensAreUnique(t *testing.T) {
-	s := NewSessions(time.Hour)
-	seen := map[string]bool{}
-	for i := 0; i < 500; i++ {
-		tok, err := s.Create("alice")
-		if err != nil {
-			t.Fatal(err)
+// A signed cookie is only good under its own key, and any tampering with it — or
+// garbage in the cookie slot — is refused, not trusted and not panicked on.
+func TestSignedCookieVerification(t *testing.T) {
+	s := NewSessions(time.Hour, []byte("key-one-key-one-key-one-key-one!"), nil)
+	tok, _ := s.Create("alice")
+	if u, ok := s.Lookup(tok); !ok || u != "alice" {
+		t.Fatalf("valid token = %q %v", u, ok)
+	}
+
+	// A different signing key must not verify the token.
+	other := NewSessions(time.Hour, []byte("key-two-key-two-key-two-key-two!"), nil)
+	if _, ok := other.Lookup(tok); ok {
+		t.Error("a token verified under a different key")
+	}
+
+	// Flipping any byte of the token breaks the MAC.
+	flip := []byte(tok)
+	flip[len(flip)-1] ^= 0x01
+	if _, ok := s.Lookup(string(flip)); ok {
+		t.Error("a tampered token verified")
+	}
+
+	// Malformed values are rejected, never panicked on.
+	for _, bad := range []string{"", "no-dot", "a.b", "...", tok + "x"} {
+		if _, ok := s.Lookup(bad); ok {
+			t.Errorf("garbage token %q verified", bad)
 		}
-		if seen[tok] {
-			t.Fatal("duplicate session token")
-		}
-		seen[tok] = true
+	}
+}
+
+// A password change bumps the user's epoch, so tokens issued before it stop
+// verifying — the stateless "log out my other sessions". The caller's re-issued
+// cookie (a later iat) still verifies, and another user is untouched.
+func TestPasswordEpochClosesOldSessions(t *testing.T) {
+	ep := newEpochStore(filepath.Join(t.TempDir(), "epochs.json"))
+	s := NewSessions(time.Hour, []byte("key-one-key-one-key-one-key-one!"), ep)
+
+	old, _ := s.Create("alice")
+	if _, ok := s.Lookup(old); !ok {
+		t.Fatal("fresh token should verify")
+	}
+	time.Sleep(2 * time.Millisecond) // a later epoch than the token's iat
+	s.DeleteOthers("alice", "")
+
+	if _, ok := s.Lookup(old); ok {
+		t.Error("a token issued before the password change still verifies")
+	}
+	if fresh, _ := s.Create("alice"); func() bool { _, ok := s.Lookup(fresh); return !ok }() {
+		t.Error("a token issued after the change should verify")
+	}
+	if bob, _ := s.Create("bob"); func() bool { _, ok := s.Lookup(bob); return !ok }() {
+		t.Error("another user's session must not be closed")
 	}
 }
 

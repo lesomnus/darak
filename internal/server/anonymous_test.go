@@ -17,7 +17,7 @@ func TestAuthedOrAnon(t *testing.T) {
 	next := func(w http.ResponseWriter, r *http.Request) { seen = userOf(r) }
 
 	// With an anonymous account, no session -> served as it.
-	s := &Server{cfg: Config{AnonymousUser: "nobody-darak"}, sessions: NewSessions(time.Hour)}
+	s := &Server{cfg: Config{AnonymousUser: "nobody-darak"}, sessions: NewSessions(time.Hour, nil, nil)}
 	seen = ""
 	s.authedOrAnon(next)(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/files/teams/pub", nil))
 	if seen != "nobody-darak" {
@@ -35,7 +35,7 @@ func TestAuthedOrAnon(t *testing.T) {
 	}
 
 	// Without an anonymous account, no session -> 401, next never runs.
-	off := &Server{cfg: Config{}, sessions: NewSessions(time.Hour)}
+	off := &Server{cfg: Config{}, sessions: NewSessions(time.Hour, nil, nil)}
 	seen = "untouched"
 	w := httptest.NewRecorder()
 	off.authedOrAnon(next)(w, httptest.NewRequest("GET", "/api/files/teams/pub", nil))
@@ -49,7 +49,7 @@ func TestAuthedOrAnon(t *testing.T) {
 
 // whoami tells the interface whether it is browsing anonymously.
 func TestWhoamiReportsAnonymous(t *testing.T) {
-	s := &Server{cfg: Config{AnonymousUser: "nobody-darak"}, sessions: NewSessions(time.Hour)}
+	s := &Server{cfg: Config{AnonymousUser: "nobody-darak"}, sessions: NewSessions(time.Hour, nil, nil)}
 
 	w := httptest.NewRecorder()
 	s.authedOrAnon(s.handleWhoami)(w, httptest.NewRequest("GET", "/api/whoami", nil))
@@ -80,7 +80,7 @@ func TestWhoamiReportsAnonymous(t *testing.T) {
 // did), so no team or account name leaks. `teams` comes from the public set —
 // empty without an Admin — and `homes` is always empty.
 func TestAnonRootEnumerationIsBlocked(t *testing.T) {
-	s := &Server{cfg: Config{AnonymousUser: "nobody-darak"}, sessions: NewSessions(time.Hour)}
+	s := &Server{cfg: Config{AnonymousUser: "nobody-darak"}, sessions: NewSessions(time.Hour, nil, nil)}
 	for _, root := range []string{"homes", "teams"} {
 		r := httptest.NewRequest("GET", "/api/files/"+root, nil).
 			WithContext(contextWithUser(context.Background(), "nobody-darak"))
