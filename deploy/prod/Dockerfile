@@ -13,11 +13,12 @@
 
 # A commit on usersync's main, not a tag — because usersync has not published a
 # tag yet, and @latest would resolve to whatever main is at build time rather
-# than a reviewed point. This pin carries `usersync watch` and the --nss-only
-# mode, which deploy/prod/entrypoint.sh depends on.
+# than a reviewed point. This pin carries `usersync watch`, --nss-only (which
+# deploy/prod/entrypoint.sh depends on), and `all: <profile>` cohorts, whose
+# resolved membership internal/admin/teams.go now reads out of `usersync roster`.
 #
 # Replace this with a tag the moment usersync publishes one.
-ARG USERSYNC_VERSION=537b61bc7f447a9f0b6cf09ee4afadb816c75438
+ARG USERSYNC_VERSION=34f7fa03dc0f372d763eee35e021331536ac53b4
 
 FROM golang:1.26-trixie AS build
 WORKDIR /src
