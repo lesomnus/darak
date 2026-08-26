@@ -27,13 +27,12 @@ import (
 // something an operator can do with the tools they already have, and can read
 // years later without this program.
 type Store struct {
-	dir    string
-	keep   time.Duration
-	now    func() time.Time
-	mu     sync.Mutex
-	day    string
-	file   *os.File
-	writer *bufio.Writer
+	dir  string
+	keep time.Duration
+	now  func() time.Time
+	mu   sync.Mutex
+	day  string
+	file *os.File
 }
 
 // DefaultKeep is the rolling window.
@@ -74,13 +73,14 @@ func (s *Store) Record(e Event) error {
 	if err := s.rollLocked(e.At); err != nil {
 		return err
 	}
-	if _, err := s.writer.Write(line); err != nil {
-		return err
-	}
-	// Flushed per event rather than buffered: the reason to look at this file is
-	// usually that something went wrong, and events still sitting in a buffer
-	// when the process died are the ones that would have explained it.
-	return s.writer.Flush()
+	// One direct write per event, not a buffered writer: the day file is opened
+	// O_APPEND, and a single write() to it appends atomically, so two replicas
+	// writing the same file cannot interleave a line — which a buffer's flush,
+	// split across write()s for a long line, could. It is also why the reason to
+	// look here (something went wrong) always finds the last event on disk rather
+	// than in a buffer a crash discarded.
+	_, err = s.file.Write(line)
+	return err
 }
 
 // rollLocked switches to the file for the event's day, pruning old ones.
@@ -90,15 +90,14 @@ func (s *Store) rollLocked(at time.Time) error {
 		return nil
 	}
 	if s.file != nil {
-		s.writer.Flush()
 		s.file.Close()
-		s.file, s.writer = nil, nil
+		s.file = nil
 	}
 	f, err := os.OpenFile(filepath.Join(s.dir, day+".jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("activity: open the day's file: %w", err)
 	}
-	s.file, s.writer, s.day = f, bufio.NewWriter(f), day
+	s.file, s.day = f, day
 	s.pruneLocked(at)
 	return nil
 }
@@ -132,9 +131,8 @@ func (s *Store) Close() error {
 	if s.file == nil {
 		return nil
 	}
-	s.writer.Flush()
 	err := s.file.Close()
-	s.file, s.writer = nil, nil
+	s.file = nil
 	return err
 }
 
@@ -160,14 +158,9 @@ func (s *Store) Query(q Query) ([]Event, error) {
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(days)))
 
-	// Flush first: an event recorded a moment ago should be visible to the page
-	// that is asking about it.
-	s.mu.Lock()
-	if s.writer != nil {
-		s.writer.Flush()
-	}
-	s.mu.Unlock()
-
+	// No flush needed before reading: Record writes each event straight to the
+	// file (O_APPEND), so an event recorded a moment ago is already on disk for
+	// the page asking about it.
 	out := []Event{}
 	for _, name := range days {
 		if !q.Since.IsZero() {
