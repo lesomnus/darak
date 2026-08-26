@@ -78,14 +78,18 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	// password because they think it was learned expects exactly that, and it is
 	// the only lever they have: SMB holds no session to close, so a client that
 	// wants back in has to present the new password anyway.
-	keep := ""
-	if c, err := r.Cookie(CookieName); err == nil {
-		keep = c.Value
+	//
+	// The bump also invalidates the caller's OWN cookie (issued before now), so
+	// re-issue it here to keep them signed in on the page they changed it from.
+	// A signed cookie holds no server-side count, so the answer is whether other
+	// sessions were closed, not how many.
+	s.sessions.DeleteOthers(user, "")
+	if tok, err := s.sessions.Create(user); err == nil {
+		setCookie(w, tok, s.cfg.SessionTTL, s.cfg.SecureCookies)
 	}
-	closed := s.sessions.DeleteOthers(user, keep)
 
-	slog.Info("password changed", "user", user, "sessions_closed", closed)
-	writeJSON(w, http.StatusOK, map[string]any{"sessions_closed": closed})
+	slog.Info("password changed", "user", user)
+	writeJSON(w, http.StatusOK, map[string]any{"sessions_closed": true})
 }
 
 // handleMyInitialPassword shows the CALLER their own seed-derived initial

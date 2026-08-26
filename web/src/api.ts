@@ -123,7 +123,7 @@ export const api = {
    * closed, which is worth showing.
    */
   changePassword: (current: string, next: string) =>
-    request<{ sessions_closed: number }>('/api/password', {
+    request<{ sessions_closed: boolean }>('/api/password', {
       method: 'POST',
       body: { current, new: next },
     }),

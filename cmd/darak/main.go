@@ -57,6 +57,8 @@ func realMain() error {
 		credsTTL      = flag.Duration("creds-ttl", helperpool.DefaultCredsTTL, "how long a credential lookup is reused; also the delay before a group change takes effect")
 		maxUpload     = flag.Int64("max-upload", 64<<30, "largest accepted request body in bytes")
 		sharesFile    = flag.String("shares", "/var/lib/darak/shares.json", "where share links are kept; must NOT be on the data volume")
+		cookieKeyFile = flag.String("cookie-key-file", "", "file holding the session-cookie signing key (HMAC); empty uses a random per-process key — single replica only")
+		epochsFile    = flag.String("session-epochs", "/var/lib/darak/session-epochs.json", "shared file of per-user session not-before times (password-change logout); must NOT be on the data volume")
 		noUI          = flag.Bool("no-ui", false, "serve only the API")
 		tlsCert       = flag.String("tls-cert", "", "PEM certificate chain; serves HTTPS when set together with -tls-key")
 		tlsKey        = flag.String("tls-key", "", "PEM private key")
@@ -129,6 +131,16 @@ func realMain() error {
 	// requires the data volume to stay free of application state, because that
 	// volume is what later becomes a shared filesystem several gateways mount.
 	shares, err := share.NewFileStore(*sharesFile)
+	if err != nil {
+		return err
+	}
+
+	// The cookie-signing key is shared across replicas so a cookie one issues
+	// verifies on another. An empty path leaves it to a random per-process key
+	// (Sessions handles that), which is correct for a single replica only. The
+	// read lives in the server package (with the other local-state file access)
+	// so this command never resolves a path itself.
+	cookieKey, err := server.ReadCookieKey(*cookieKeyFile)
 	if err != nil {
 		return err
 	}
@@ -337,11 +349,13 @@ func realMain() error {
 		// page reads "enabled" and then renders a null rules list — so a
 		// deployment with provisioning off (no watcher) leaves this nil, and
 		// handleProvisioning answers `enabled: false`.
-		ProvisionConfig: provisionStatus(watcher),
-		SessionTTL:      *sessionTTL,
-		SecureCookies:   *secureCookies,
-		MaxUpload:       *maxUpload,
-		AnonymousUser:   *anonymousUser,
+		ProvisionConfig:  provisionStatus(watcher),
+		SessionTTL:       *sessionTTL,
+		SecureCookies:    *secureCookies,
+		CookieKey:        cookieKey,
+		SessionEpochPath: *epochsFile,
+		MaxUpload:        *maxUpload,
+		AnonymousUser:    *anonymousUser,
 	})
 	if err != nil {
 		return err

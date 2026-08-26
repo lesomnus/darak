@@ -120,6 +120,19 @@ type Config struct {
 	// deployment say which it is.
 	SecureCookies bool
 
+	// CookieKey signs the session cookie (HMAC-SHA256). It MUST be the same on
+	// every replica, or a cookie one pod issued will not verify on another. Empty
+	// means "no shared key": a random per-process key is used, which works for a
+	// single replica but drops every session on restart and cannot be shared —
+	// so active-active needs this set (from a mounted secret).
+	CookieKey []byte
+
+	// SessionEpochPath is a small shared file holding each user's session
+	// not-before time, bumped on a password change to close their other sessions.
+	// Empty disables that (single-replica: nothing to share). Put it on the same
+	// shared volume as the other state so both replicas read one file.
+	SessionEpochPath string
+
 	// AnonymousUser is the OS account file requests without a session are served
 	// as. Empty (the default) disables anonymous access entirely: no session,
 	// no answer, exactly as before. When set, an unauthenticated file request is
@@ -164,9 +177,13 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Brand.Name == "" {
 		cfg.Brand.Name = DefaultBrandName
 	}
+	var epochs *epochStore
+	if cfg.SessionEpochPath != "" {
+		epochs = newEpochStore(cfg.SessionEpochPath)
+	}
 	return &Server{
 		cfg:       cfg,
-		sessions:  NewSessions(cfg.SessionTTL),
+		sessions:  NewSessions(cfg.SessionTTL, cfg.CookieKey, epochs),
 		flows:     sso.NewFlows(),
 		notices:   newNotices(),
 		enroll:    newEnrollTracker(),

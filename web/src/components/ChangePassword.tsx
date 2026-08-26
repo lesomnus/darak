@@ -30,7 +30,7 @@ export function ChangePassword({
   const [next, setNext] = useState('')
   const [again, setAgain] = useState('')
   const [busy, setBusy] = useState(false)
-  const [closed, setClosed] = useState<number | null>(null)
+  const [closed, setClosed] = useState<boolean | null>(null)
   const [initial, setInitial] = useState<{ still_initial: boolean; password?: string } | null>(null)
   const [revealing, setRevealing] = useState(false)
 
@@ -73,7 +73,7 @@ export function ChangePassword({
             <p className="muted small">
               탐색기(SMB)에 저장해 둔 비밀번호도 새 것으로 고쳐야 합니다. 저장된 자격 증명이 옛
               비밀번호로 계속 시도되면 계정이 잠길 수 있는 환경도 있습니다.
-              {closed > 0 && ` 다른 기기에서 열려 있던 로그인 ${closed}개는 닫았습니다.`}
+              {closed && ' 다른 기기에서 열려 있던 로그인은 모두 로그아웃됩니다.'}
             </p>
             <div className="dialog-actions">
               <button type="button" onClick={onClose}>
