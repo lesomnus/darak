@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/lesomnus/darak/internal/auth"
+	"github.com/lesomnus/darak/internal/statefile"
 )
 
 var (
@@ -83,10 +84,17 @@ type Mapping struct {
 // with several gateways mounting it, and application state must not be sitting
 // on it when that happens.
 type Store struct {
-	// Save persists the current set. Nil keeps everything in memory, which is
-	// only useful in tests — an approval that did not survive a restart would be
-	// worse than no approval at all.
+	// Save persists the current set. It is used only in the in-memory mode tests
+	// run in; a file-backed store (NewFileStore) leaves it nil and persists
+	// through guard instead. An approval that did not survive a restart would be
+	// worse than no approval at all, which is why production always has one path
+	// or the other.
 	Save func(mappings []Mapping) error
+
+	// guard coordinates the state file across replicas: it reloads this store
+	// when another replica has written, and serializes this store's own writes
+	// against theirs. Nil means in-memory only. See internal/statefile.
+	guard *statefile.Guard
 
 	mu sync.Mutex
 	// byAccount is the record. The other two are indexes built from it, and are
@@ -155,6 +163,14 @@ func ValidEmail(s string) bool {
 // would revoke every approval without saying so, and everyone would be told
 // their address is unknown at once.
 func (s *Store) Load(data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked(data)
+}
+
+// loadLocked is Load's body; the caller holds the lock. guard calls it to reload
+// the store from disk when another replica has written.
+func (s *Store) loadLocked(data []byte) error {
 	var list []Mapping
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &list); err != nil {
@@ -162,8 +178,6 @@ func (s *Store) Load(data []byte) error {
 		}
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.reset()
 	for i := range list {
 		m := list[i]
@@ -205,9 +219,45 @@ func (s *Store) Load(data []byte) error {
 // what changed rather than how the map happened to iterate.
 func (s *Store) Marshal() ([]byte, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.marshalLocked()
+}
+
+// marshalLocked is Marshal's body; the caller holds the lock. guard writes its
+// bytes back to disk after a mutation.
+func (s *Store) marshalLocked() ([]byte, error) {
+	return json.MarshalIndent(s.list(), "", "  ")
+}
+
+// fresh reloads from the shared file if another replica has written. The caller
+// holds the lock. A reload error is left to surface on the next write rather than
+// failing a read: a lookup returning the last-known mapping is better than one
+// that errors.
+func (s *Store) fresh() {
+	_ = s.guard.Fresh(s.loadLocked)
+}
+
+// commit runs a mutation under the in-process lock and persists it. With a
+// shared file it is a cross-replica read-modify-write (reload newest, mutate,
+// rewrite only if mutate changed something); with none (tests) it is the
+// mutation plus the optional Save. mutate returns whether anything changed, and
+// a conflict returns (false, err) so a refused change writes nothing.
+func (s *Store) commit(mutate func() (bool, error)) error {
+	s.mu.Lock()
+	if s.guard != nil {
+		defer s.mu.Unlock()
+		return s.guard.Write(s.loadLocked, mutate, s.marshalLocked)
+	}
+	// Save runs after the lock is released, with a list taken under it: a
+	// caller's Save may read the store back, which would deadlock under the lock.
+	changed, err := mutate()
+	if err != nil || !changed || s.Save == nil {
+		s.mu.Unlock()
+		return err
+	}
 	list := s.list()
 	s.mu.Unlock()
-	return json.MarshalIndent(list, "", "  ")
+	return s.Save(list)
 }
 
 // list returns a copy, sorted by account. Callers must hold the lock.
@@ -226,6 +276,7 @@ func (s *Store) list() []Mapping {
 func (s *Store) List() []Mapping {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	return s.list()
 }
 
@@ -241,6 +292,7 @@ func (s *Store) BySubject(issuer, subject string) (string, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	account, ok := s.bySubject[subjectKey(issuer, subject)]
 	return account, ok
 }
@@ -258,6 +310,7 @@ func (s *Store) ByEmail(email string) (string, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	account, ok := s.byEmail[email]
 	return account, ok
 }
@@ -266,6 +319,7 @@ func (s *Store) ByEmail(email string) (string, bool) {
 func (s *Store) Get(account string) (Mapping, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	m, ok := s.byAccount[account]
 	if !ok {
 		return Mapping{}, false
@@ -293,28 +347,25 @@ func (s *Store) Pin(account, issuer, subject string, now time.Time) error {
 	if subject == "" {
 		return fmt.Errorf("identity: refusing to pin an empty subject on %q", account)
 	}
-	s.mu.Lock()
-	m, ok := s.byAccount[account]
-	if !ok {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %q", ErrNoMapping, account)
-	}
-	if m.Subject != "" {
-		s.mu.Unlock()
-		if m.Subject == subject && m.Issuer == issuer {
-			return nil
+	return s.commit(func() (bool, error) {
+		m, ok := s.byAccount[account]
+		if !ok {
+			return false, fmt.Errorf("%w: %q", ErrNoMapping, account)
 		}
-		return fmt.Errorf("%w: %q", ErrSubjectPinned, account)
-	}
-	k := subjectKey(issuer, subject)
-	if other, dup := s.bySubject[k]; dup {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: subject already answers for %q", ErrTaken, other)
-	}
-	m.Issuer, m.Subject, m.UpdatedAt = issuer, subject, now
-	s.bySubject[k] = account
-	s.mu.Unlock()
-	return s.save()
+		if m.Subject != "" {
+			if m.Subject == subject && m.Issuer == issuer {
+				return false, nil // already pinned to this object; nothing to write
+			}
+			return false, fmt.Errorf("%w: %q", ErrSubjectPinned, account)
+		}
+		k := subjectKey(issuer, subject)
+		if other, dup := s.bySubject[k]; dup {
+			return false, fmt.Errorf("%w: subject already answers for %q", ErrTaken, other)
+		}
+		m.Issuer, m.Subject, m.UpdatedAt = issuer, subject, now
+		s.bySubject[k] = account
+		return true, nil
+	})
 }
 
 // AttachEmail adds an address to a mapping whose subject already matched.
@@ -329,25 +380,23 @@ func (s *Store) AttachEmail(account, email string, now time.Time) error {
 	if !ValidEmail(email) {
 		return fmt.Errorf("%w: %q", ErrBadAddress, email)
 	}
-	s.mu.Lock()
-	m, ok := s.byAccount[account]
-	if !ok {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %q", ErrNoMapping, account)
-	}
-	if other, dup := s.byEmail[email]; dup {
-		s.mu.Unlock()
-		if other == account {
-			return nil
+	return s.commit(func() (bool, error) {
+		m, ok := s.byAccount[account]
+		if !ok {
+			return false, fmt.Errorf("%w: %q", ErrNoMapping, account)
 		}
-		return fmt.Errorf("%w: %q", ErrTaken, other)
-	}
-	m.Emails = append(m.Emails, email)
-	sort.Strings(m.Emails)
-	m.UpdatedAt = now
-	s.byEmail[email] = account
-	s.mu.Unlock()
-	return s.save()
+		if other, dup := s.byEmail[email]; dup {
+			if other == account {
+				return false, nil // already attached; nothing to write
+			}
+			return false, fmt.Errorf("%w: %q", ErrTaken, other)
+		}
+		m.Emails = append(m.Emails, email)
+		sort.Strings(m.Emails)
+		m.UpdatedAt = now
+		s.byEmail[email] = account
+		return true, nil
+	})
 }
 
 // Approve binds an identity to an account.
@@ -369,49 +418,48 @@ func (s *Store) Approve(account, issuer, subject string, emails []string, by str
 		clean = append(clean, e)
 	}
 
-	s.mu.Lock()
-	// Every conflict is checked before anything is written: a half-applied
-	// approval would leave an index disagreeing with the record.
-	for _, e := range clean {
-		if other, dup := s.byEmail[e]; dup && other != account {
-			s.mu.Unlock()
-			return Mapping{}, fmt.Errorf("%w: %q answers for %q", ErrTaken, e, other)
+	var out Mapping
+	err := s.commit(func() (bool, error) {
+		// Every conflict is checked before anything is written: a half-applied
+		// approval would leave an index disagreeing with the record.
+		for _, e := range clean {
+			if other, dup := s.byEmail[e]; dup && other != account {
+				return false, fmt.Errorf("%w: %q answers for %q", ErrTaken, e, other)
+			}
 		}
-	}
-	if subject != "" {
-		if other, dup := s.bySubject[subjectKey(issuer, subject)]; dup && other != account {
-			s.mu.Unlock()
-			return Mapping{}, fmt.Errorf("%w: subject answers for %q", ErrTaken, other)
+		if subject != "" {
+			if other, dup := s.bySubject[subjectKey(issuer, subject)]; dup && other != account {
+				return false, fmt.Errorf("%w: subject answers for %q", ErrTaken, other)
+			}
 		}
-	}
-	m, ok := s.byAccount[account]
-	if !ok {
-		m = &Mapping{Account: account, ApprovedBy: by, ApprovedAt: now}
-		s.byAccount[account] = m
-	}
-	if subject != "" {
-		if m.Subject != "" && (m.Subject != subject || m.Issuer != issuer) {
-			s.mu.Unlock()
-			return Mapping{}, fmt.Errorf("%w: %q", ErrSubjectPinned, account)
+		m, ok := s.byAccount[account]
+		if !ok {
+			m = &Mapping{Account: account, ApprovedBy: by, ApprovedAt: now}
+			s.byAccount[account] = m
 		}
-		m.Issuer, m.Subject = issuer, subject
-		s.bySubject[subjectKey(issuer, subject)] = account
-	}
-	for _, e := range clean {
-		if _, have := s.byEmail[e]; !have {
-			m.Emails = append(m.Emails, e)
-			s.byEmail[e] = account
+		if subject != "" {
+			if m.Subject != "" && (m.Subject != subject || m.Issuer != issuer) {
+				return false, fmt.Errorf("%w: %q", ErrSubjectPinned, account)
+			}
+			m.Issuer, m.Subject = issuer, subject
+			s.bySubject[subjectKey(issuer, subject)] = account
 		}
-	}
-	sort.Strings(m.Emails)
-	m.UpdatedAt = now
-	if m.ApprovedBy == "" {
-		m.ApprovedBy, m.ApprovedAt = by, now
-	}
-	out := *m
-	out.Emails = append([]string(nil), m.Emails...)
-	s.mu.Unlock()
-	return out, s.save()
+		for _, e := range clean {
+			if _, have := s.byEmail[e]; !have {
+				m.Emails = append(m.Emails, e)
+				s.byEmail[e] = account
+			}
+		}
+		sort.Strings(m.Emails)
+		m.UpdatedAt = now
+		if m.ApprovedBy == "" {
+			m.ApprovedBy, m.ApprovedAt = by, now
+		}
+		out = *m
+		out.Emails = append([]string(nil), m.Emails...)
+		return true, nil
+	})
+	return out, err
 }
 
 // Forget removes a mapping entirely.
@@ -421,57 +469,47 @@ func (s *Store) Approve(account, issuer, subject string, emails []string, by str
 // both web paths at once. This is for a mapping that is wrong, not for a person
 // who has left.
 func (s *Store) Forget(account string) error {
-	s.mu.Lock()
-	m, ok := s.byAccount[account]
-	if !ok {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %q", ErrNoMapping, account)
-	}
-	for _, e := range m.Emails {
-		delete(s.byEmail, e)
-	}
-	if m.Subject != "" {
-		delete(s.bySubject, subjectKey(m.Issuer, m.Subject))
-	}
-	delete(s.byAccount, account)
-	s.mu.Unlock()
-	return s.save()
+	return s.commit(func() (bool, error) {
+		m, ok := s.byAccount[account]
+		if !ok {
+			return false, fmt.Errorf("%w: %q", ErrNoMapping, account)
+		}
+		for _, e := range m.Emails {
+			delete(s.byEmail, e)
+		}
+		if m.Subject != "" {
+			delete(s.bySubject, subjectKey(m.Issuer, m.Subject))
+		}
+		delete(s.byAccount, account)
+		return true, nil
+	})
 }
 
 // DetachEmail removes one address, leaving the mapping in place.
 func (s *Store) DetachEmail(account, email string, now time.Time) error {
 	email = NormalizeEmail(email)
-	s.mu.Lock()
-	m, ok := s.byAccount[account]
-	if !ok {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %q", ErrNoMapping, account)
-	}
-	kept := m.Emails[:0]
-	found := false
-	for _, e := range m.Emails {
-		if e == email {
-			found = true
-			continue
+	return s.commit(func() (bool, error) {
+		m, ok := s.byAccount[account]
+		if !ok {
+			return false, fmt.Errorf("%w: %q", ErrNoMapping, account)
 		}
-		kept = append(kept, e)
-	}
-	if !found {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %q is not on %q", ErrNoMapping, email, account)
-	}
-	m.Emails = kept
-	m.UpdatedAt = now
-	delete(s.byEmail, email)
-	s.mu.Unlock()
-	return s.save()
-}
-
-func (s *Store) save() error {
-	if s.Save == nil {
-		return nil
-	}
-	return s.Save(s.List())
+		kept := m.Emails[:0]
+		found := false
+		for _, e := range m.Emails {
+			if e == email {
+				found = true
+				continue
+			}
+			kept = append(kept, e)
+		}
+		if !found {
+			return false, fmt.Errorf("%w: %q is not on %q", ErrNoMapping, email, account)
+		}
+		m.Emails = kept
+		m.UpdatedAt = now
+		delete(s.byEmail, email)
+		return true, nil
+	})
 }
 
 // Problem is a mapping that does not line up with the roster.
@@ -492,6 +530,7 @@ type Problem struct {
 func (s *Store) Check(status map[string]string) []Problem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	out := []Problem{}
 	for _, account := range sortedKeys(s.byAccount) {
 		st, ok := status[account]

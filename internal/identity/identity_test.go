@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -184,7 +185,7 @@ func TestFileStoreRoundTrip(t *testing.T) {
 
 func TestFileStoreRefusesAMalformedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identities.json")
-	if err := replace(path, ".x-*", []byte("{ not json")); err != nil {
+	if err := os.WriteFile(path, []byte("{ not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewFileStore(path); err == nil {

@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/lesomnus/darak/internal/statefile"
 )
 
 // NewFileStore loads the approved mappings from path, or starts empty if there
@@ -31,24 +33,14 @@ import (
 // they can do from the login page.
 func NewFileStore(path string) (*Store, error) {
 	s := NewStore()
-
-	data, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		if err := s.Load(data); err != nil {
-			return nil, fmt.Errorf("identity: %s: %w", path, err)
-		}
-	case errors.Is(err, os.ErrNotExist):
-	default:
+	s.guard = statefile.New(path)
+	// The initial load goes through guard: it fails fast on a malformed file (a
+	// missing one is fine, a broken one is not) and primes the reload cache.
+	s.mu.Lock()
+	err := s.guard.Fresh(s.loadLocked)
+	s.mu.Unlock()
+	if err != nil {
 		return nil, fmt.Errorf("identity: %s: %w", path, err)
-	}
-
-	s.Save = func([]Mapping) error {
-		data, err := s.Marshal()
-		if err != nil {
-			return err
-		}
-		return replace(path, ".identities-*.json", data)
 	}
 	return s, nil
 }
@@ -61,7 +53,13 @@ func NewFileStore(path string) (*Store, error) {
 // cmd/darak logs it and carries on with an empty queue.
 func NewFileQueue(path string) (*Queue, error) {
 	q := NewQueue()
+	q.guard = statefile.New(path)
 
+	// The queue tolerates a broken file rather than refusing to start over it, so
+	// unlike the mapping store it does the initial read itself: on any load error
+	// it keeps the empty in-memory queue and reports the problem, and Seen primes
+	// the reload cache so reads do not re-hit the same bad bytes. The next write
+	// replaces the file with a good one.
 	var loadErr error
 	data, err := os.ReadFile(path)
 	switch {
@@ -71,14 +69,7 @@ func NewFileQueue(path string) (*Queue, error) {
 	default:
 		loadErr = err
 	}
-
-	q.Save = func([]Request) error {
-		data, err := q.Marshal()
-		if err != nil {
-			return err
-		}
-		return replace(path, ".pending-*.json", data)
-	}
+	q.guard.Seen()
 	if loadErr != nil {
 		return q, fmt.Errorf("identity: %s: %w", path, loadErr)
 	}
@@ -194,43 +185,4 @@ func (j *Journal) Tail(n int) ([]JournalEntry, error) {
 		out = append(out, all[i])
 	}
 	return out, nil
-}
-
-// replace writes data to path atomically.
-//
-// Temp file then rename, for the reason the write protocol uses it: a partial
-// write leaves a truncated JSON document, and the next start would refuse to
-// load it — turning a crash mid-save into every approval being lost.
-func replace(path, pattern string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("identity: %s: %w", dir, err)
-	}
-	tmp, err := os.CreateTemp(dir, pattern)
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name) // no-op once the rename has happened
-
-	// 0600: this file decides who may sign in as whom. It is not a secret in the
-	// way a token is, but anything that can write it can grant access.
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	// Durability before visibility: the rename must not be able to publish a name
-	// whose contents are still in the page cache.
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
 }

@@ -62,6 +62,18 @@ fi
 if [[ -n ${DARAK_CONTROL_ADDR:-} ]]; then
 	args+=(-control-addr "$DARAK_CONTROL_ADDR")
 fi
+
+# The session-cookie signing key. Cookies are signed (HMAC), not stored, so more
+# than one replica can verify each other's sessions — but only if they share the
+# key. Without this every replica invents its own and a cookie minted on one pod
+# is rejected by the next, which reads as a random logout under a load balancer.
+# A file, not an env value, because argv and the environment are both readable
+# through /proc; empty (a single replica) lets darak use a random per-process key.
+if [[ -n ${DARAK_COOKIE_KEY_FILE:-} ]]; then
+	[[ -r ${DARAK_COOKIE_KEY_FILE} ]] ||
+		die "cannot read $DARAK_COOKIE_KEY_FILE — is the cookie-key secret mounted?"
+	args+=(-cookie-key-file "$DARAK_COOKIE_KEY_FILE")
+fi
 if [[ -n ${DARAK_TLS_CERT:-} ]]; then
 	[[ -n ${DARAK_TLS_KEY:-} ]] || die "DARAK_TLS_CERT is set but DARAK_TLS_KEY is not"
 	[[ -r ${DARAK_TLS_CERT} ]] || die "cannot read $DARAK_TLS_CERT — is the TLS directory mounted?"

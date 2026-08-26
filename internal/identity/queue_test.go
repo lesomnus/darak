@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -105,7 +106,7 @@ func TestRecordRefusesASubjectlessRequest(t *testing.T) {
 // Unreviewed input must not be able to decide whether the server starts.
 func TestFileQueueSurvivesAMalformedFile(t *testing.T) {
 	path := t.TempDir() + "/pending.json"
-	if err := replace(path, ".x-*", []byte("{ not json")); err != nil {
+	if err := os.WriteFile(path, []byte("{ not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	q, err := NewFileQueue(path)

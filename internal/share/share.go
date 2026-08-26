@@ -24,6 +24,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/lesomnus/darak/internal/statefile"
 )
 
 // MaxLifetime caps how long a link can be asked to live.
@@ -74,13 +76,18 @@ func (l *Link) Expired(now time.Time) bool { return now.After(l.Expires) }
 // data volume, because that volume is the thing that later moves to a shared
 // filesystem and gets mounted by more than one gateway.
 type Store struct {
-	// Save persists the current set. It may be nil, in which case links live only
-	// as long as the process — which is a bad experience across an upgrade, so
-	// the server always provides one.
+	// Save persists the current set. It is used only when no shared state file
+	// backs the store — the in-memory mode tests run in. A file-backed store
+	// (NewFileStore) leaves this nil and persists through guard instead.
 	Save func(links []Link) error
 
 	// Now is overridable for tests.
 	Now func() time.Time
+
+	// guard coordinates the state file across replicas: it reloads this store
+	// when another replica has written, and serializes this store's own writes
+	// against theirs. Nil means in-memory only (tests). See internal/statefile.
+	guard *statefile.Guard
 
 	mu sync.Mutex
 	m  map[string]*Link
@@ -99,14 +106,20 @@ func (s *Store) now() time.Time {
 // Load replaces the contents from previously saved JSON. Expired links are
 // dropped rather than loaded and immediately refused.
 func (s *Store) Load(data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked(data)
+}
+
+// loadLocked is Load's body; the caller holds the lock. It is what guard calls
+// to reload the store from disk when another replica has written.
+func (s *Store) loadLocked(data []byte) error {
 	var links []Link
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &links); err != nil {
 			return fmt.Errorf("share: load: %w", err)
 		}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.m = make(map[string]*Link, len(links))
 	now := s.now()
 	for i := range links {
@@ -122,9 +135,45 @@ func (s *Store) Load(data []byte) error {
 // Marshal renders the store for persistence, in a stable order.
 func (s *Store) Marshal() ([]byte, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.marshalLocked()
+}
+
+// marshalLocked is Marshal's body; the caller holds the lock. It is what guard
+// writes back to disk after a mutation.
+func (s *Store) marshalLocked() ([]byte, error) {
+	return json.MarshalIndent(s.snapshot(), "", "  ")
+}
+
+// fresh reloads from the shared file if another replica has written. The caller
+// holds the lock. A reload error is left to surface on the next write rather than
+// failing a read: a read that returns the last-known set is better than one that
+// returns an error the caller cannot act on.
+func (s *Store) fresh() {
+	_ = s.guard.Fresh(s.loadLocked)
+}
+
+// commit runs a mutation under the in-process lock and persists it. With a
+// shared file it is a cross-replica read-modify-write (reload newest, mutate,
+// rewrite only if mutate changed something); with none (tests) it is the
+// mutation plus the optional Save. mutate returns whether anything changed.
+func (s *Store) commit(mutate func() (bool, error)) error {
+	s.mu.Lock()
+	if s.guard != nil {
+		defer s.mu.Unlock()
+		return s.guard.Write(s.loadLocked, mutate, s.marshalLocked)
+	}
+	// In-memory mode: Save is called AFTER the lock is released with a snapshot
+	// taken under it, because a caller's Save may read the store back (Marshal),
+	// which would deadlock if the lock were still held.
+	changed, err := mutate()
+	if err != nil || !changed || s.Save == nil {
+		s.mu.Unlock()
+		return err
+	}
 	links := s.snapshot()
 	s.mu.Unlock()
-	return json.MarshalIndent(links, "", "  ")
+	return s.Save(links)
 }
 
 // snapshot returns the live links sorted by token. Caller holds the lock.
@@ -175,12 +224,10 @@ func (s *Store) Create(owner, path, password string, lifetime time.Duration) (*L
 		l.PasswordHash = hashPassword(salt, password)
 	}
 
-	s.mu.Lock()
-	s.m[l.Token] = l
-	links := s.snapshot()
-	s.mu.Unlock()
-
-	if err := s.persist(links); err != nil {
+	if err := s.commit(func() (bool, error) {
+		s.m[l.Token] = l
+		return true, nil
+	}); err != nil {
 		return nil, err
 	}
 	out := *l
@@ -190,6 +237,7 @@ func (s *Store) Create(owner, path, password string, lifetime time.Duration) (*L
 // Resolve returns the link a token names, checking expiry and password.
 func (s *Store) Resolve(token, password string) (*Link, error) {
 	s.mu.Lock()
+	s.fresh()
 	l, ok := s.m[token]
 	if ok && l.Expired(s.now()) {
 		delete(s.m, token)
@@ -224,6 +272,7 @@ func (s *Store) Resolve(token, password string) (*Link, error) {
 func (s *Store) Get(token string) (*Link, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	l, ok := s.m[token]
 	if !ok || l.Expired(s.now()) {
 		return nil, ErrNotFound
@@ -234,24 +283,23 @@ func (s *Store) Get(token string) (*Link, error) {
 
 // Revoke removes a link. Only its owner may.
 func (s *Store) Revoke(owner, token string) error {
-	s.mu.Lock()
-	l, ok := s.m[token]
-	if !ok || l.Owner != owner {
-		s.mu.Unlock()
-		// Same error either way: whether a token exists is not something a
-		// non-owner should be able to find out by asking.
-		return ErrNotFound
-	}
-	delete(s.m, token)
-	links := s.snapshot()
-	s.mu.Unlock()
-	return s.persist(links)
+	return s.commit(func() (bool, error) {
+		l, ok := s.m[token]
+		if !ok || l.Owner != owner {
+			// Same error either way: whether a token exists is not something a
+			// non-owner should be able to find out by asking. Nothing is written.
+			return false, ErrNotFound
+		}
+		delete(s.m, token)
+		return true, nil
+	})
 }
 
 // ListByOwner returns one user's live links, newest first.
 func (s *Store) ListByOwner(owner string) []Link {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	var out []Link
 	now := s.now()
 	for _, l := range s.m {
@@ -269,35 +317,25 @@ func (s *Store) ListByOwner(owner string) []Link {
 
 // Sweep drops expired links and persists the result.
 func (s *Store) Sweep() error {
-	s.mu.Lock()
-	now := s.now()
-	changed := false
-	for token, l := range s.m {
-		if l.Expired(now) {
-			delete(s.m, token)
-			changed = true
+	return s.commit(func() (bool, error) {
+		now := s.now()
+		changed := false
+		for token, l := range s.m {
+			if l.Expired(now) {
+				delete(s.m, token)
+				changed = true
+			}
 		}
-	}
-	links := s.snapshot()
-	s.mu.Unlock()
-	if !changed {
-		return nil
-	}
-	return s.persist(links)
+		return changed, nil
+	})
 }
 
 // Len reports how many live links are held.
 func (s *Store) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh()
 	return len(s.snapshot())
-}
-
-func (s *Store) persist(links []Link) error {
-	if s.Save == nil {
-		return nil
-	}
-	return s.Save(links)
 }
 
 // hashPassword salts and hashes a link password.

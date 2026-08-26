@@ -93,7 +93,7 @@ const localStateMarker = "//darak:local-state"
 // maxExempt bounds how many files may carry the marker. An exemption mechanism
 // with no ceiling becomes the rule it was an exception to.
 //
-// Raising it is meant to be an argument, not a formality. The eight today:
+// Raising it is meant to be an argument, not a formality. The ten today:
 //
 //	internal/share/file.go       the share-link store, at an operator-given path
 //	internal/helperpool/idmap.go /proc/self/uid_map, the process asking about itself
@@ -105,6 +105,16 @@ const localStateMarker = "//darak:local-state"
 //	internal/provision/file.go   the provisioning rules and the token they send
 //	internal/server/epoch.go     the session-epoch file + the cookie-signing key,
 //	                             both operator-supplied paths for server-owned state
+//	internal/statefile/statefile.go  the cross-replica coordinator for the share
+//	                             and identity stores, at their operator-given paths
+//
+// The tenth is epoch.go's generalization: the one place the reload-on-read and
+// flock-read-modify-write protocol lives, so the share and identity stores share
+// it instead of each rolling their own. It resolves nothing a request supplies —
+// the path is whichever operator-configured flag its caller was built with — and
+// like epoch.go it holds no file any user owns. A single tested coordinator is a
+// better story than the same locking duplicated into three stores, which is why
+// it earns a slot rather than being inlined.
 //
 // The fifth is the weakest of the five and still clears the bar: it resolves a
 // path INSIDE package server, which is where the rule bites hardest. What saves
@@ -147,7 +157,7 @@ const localStateMarker = "//darak:local-state"
 // Anything that reads a user's file, or resolves a name a request supplied,
 // does not qualify however convenient the marker would be. That is the case the
 // helper exists for.
-const maxExempt = 9
+const maxExempt = 10
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
