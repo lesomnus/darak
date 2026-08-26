@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/lesomnus/darak/internal/statefile"
 )
 
 // Defaults for the queue's two bounds. See Queue.
@@ -50,12 +52,16 @@ type Request struct {
 // this system, and the less of them that is written down the less there is to
 // delete later.
 type Queue struct {
-	// Save persists the current set. Nil keeps it in memory.
+	// Save persists the current set. Used only in the in-memory mode tests run
+	// in; a file-backed queue (NewFileQueue) persists through guard instead.
 	Save func(requests []Request) error
 
 	// TTL and Max bound the queue. Zero means the defaults above.
 	TTL time.Duration
 	Max int
+
+	// guard coordinates the state file across replicas. Nil means in-memory only.
+	guard *statefile.Guard
 
 	mu sync.Mutex
 	m  map[string]*Request
@@ -86,14 +92,20 @@ func (q *Queue) max() int {
 // themselves. Refusing to start over it would let unreviewed input — which is
 // what this is — decide whether the file server comes up.
 func (q *Queue) Load(data []byte) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.loadLocked(data)
+}
+
+// loadLocked is Load's body; the caller holds the lock. guard calls it to reload
+// the queue when another replica has written.
+func (q *Queue) loadLocked(data []byte) error {
 	var list []Request
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &list); err != nil {
 			return fmt.Errorf("identity: parse pending requests: %w", err)
 		}
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
 	q.m = map[string]*Request{}
 	for i := range list {
 		r := list[i]
@@ -108,9 +120,38 @@ func (q *Queue) Load(data []byte) error {
 // Marshal renders the queue, oldest first.
 func (q *Queue) Marshal() ([]byte, error) {
 	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.marshalLocked()
+}
+
+func (q *Queue) marshalLocked() ([]byte, error) {
+	return json.MarshalIndent(q.list(), "", "  ")
+}
+
+// fresh reloads from the shared file if another replica has written. Caller
+// holds the lock.
+func (q *Queue) fresh() {
+	_ = q.guard.Fresh(q.loadLocked)
+}
+
+// commit runs a mutation under the in-process lock and persists it, as a
+// cross-replica read-modify-write when a file backs the queue and as the
+// mutation plus optional Save when none does. mutate returns whether anything
+// changed.
+func (q *Queue) commit(mutate func() (bool, error)) error {
+	q.mu.Lock()
+	if q.guard != nil {
+		defer q.mu.Unlock()
+		return q.guard.Write(q.loadLocked, mutate, q.marshalLocked)
+	}
+	changed, err := mutate()
+	if err != nil || !changed || q.Save == nil {
+		q.mu.Unlock()
+		return err
+	}
 	list := q.list()
 	q.mu.Unlock()
-	return json.MarshalIndent(list, "", "  ")
+	return q.Save(list)
 }
 
 // list copies the queue, most recent first. Callers must hold the lock.
@@ -129,6 +170,7 @@ func (q *Queue) list() []Request {
 func (q *Queue) List() []Request {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.fresh()
 	q.sweep(time.Now())
 	return q.list()
 }
@@ -137,6 +179,7 @@ func (q *Queue) List() []Request {
 func (q *Queue) Get(issuer, subject string) (Request, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.fresh()
 	r, ok := q.m[subjectKey(issuer, subject)]
 	if !ok {
 		return Request{}, false
@@ -155,64 +198,58 @@ func (q *Queue) Record(req Request, now time.Time) error {
 	if req.Subject == "" {
 		return fmt.Errorf("identity: refusing to queue a request with no subject")
 	}
-	q.mu.Lock()
-	q.sweep(now)
+	return q.commit(func() (bool, error) {
+		q.sweep(now)
 
-	k := subjectKey(req.Issuer, req.Subject)
-	if have, ok := q.m[k]; ok {
-		have.Last = now
-		have.Count++
-		have.Name = req.Name
-		have.Emails = mergeStrings(have.Emails, req.Emails)
-		q.mu.Unlock()
-		return q.save()
-	}
-
-	// The ceiling drops the least recently seen, not the newest arrival:
-	// somebody trying right now is more likely to be a person waiting for an
-	// answer than a row from two weeks ago that nobody acted on.
-	for len(q.m) >= q.max() {
-		var oldestKey string
-		var oldest time.Time
-		for k, r := range q.m {
-			if oldestKey == "" || r.Last.Before(oldest) {
-				oldestKey, oldest = k, r.Last
-			}
+		k := subjectKey(req.Issuer, req.Subject)
+		if have, ok := q.m[k]; ok {
+			have.Last = now
+			have.Count++
+			have.Name = req.Name
+			have.Emails = mergeStrings(have.Emails, req.Emails)
+			return true, nil
 		}
-		delete(q.m, oldestKey)
-	}
 
-	req.First, req.Last, req.Count = now, now, 1
-	req.Emails = mergeStrings(nil, req.Emails)
-	q.m[k] = &req
-	q.mu.Unlock()
-	return q.save()
+		// The ceiling drops the least recently seen, not the newest arrival:
+		// somebody trying right now is more likely to be a person waiting for an
+		// answer than a row from two weeks ago that nobody acted on.
+		for len(q.m) >= q.max() {
+			var oldestKey string
+			var oldest time.Time
+			for k, r := range q.m {
+				if oldestKey == "" || r.Last.Before(oldest) {
+					oldestKey, oldest = k, r.Last
+				}
+			}
+			delete(q.m, oldestKey)
+		}
+
+		req.First, req.Last, req.Count = now, now, 1
+		req.Emails = mergeStrings(nil, req.Emails)
+		q.m[k] = &req
+		return true, nil
+	})
 }
 
 // Discard removes a request without approving it.
 func (q *Queue) Discard(issuer, subject string) error {
-	q.mu.Lock()
-	k := subjectKey(issuer, subject)
-	if _, ok := q.m[k]; !ok {
-		q.mu.Unlock()
-		return fmt.Errorf("%w: no such request", ErrNoMapping)
-	}
-	delete(q.m, k)
-	q.mu.Unlock()
-	return q.save()
+	return q.commit(func() (bool, error) {
+		k := subjectKey(issuer, subject)
+		if _, ok := q.m[k]; !ok {
+			return false, fmt.Errorf("%w: no such request", ErrNoMapping)
+		}
+		delete(q.m, k)
+		return true, nil
+	})
 }
 
 // Sweep drops expired requests.
 func (q *Queue) Sweep() error {
-	q.mu.Lock()
-	before := len(q.m)
-	q.sweep(time.Now())
-	changed := before != len(q.m)
-	q.mu.Unlock()
-	if !changed {
-		return nil
-	}
-	return q.save()
+	return q.commit(func() (bool, error) {
+		before := len(q.m)
+		q.sweep(time.Now())
+		return before != len(q.m), nil
+	})
 }
 
 // sweep drops expired requests. Callers must hold the lock.
@@ -229,14 +266,8 @@ func (q *Queue) sweep(now time.Time) {
 func (q *Queue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.fresh()
 	return len(q.m)
-}
-
-func (q *Queue) save() error {
-	if q.Save == nil {
-		return nil
-	}
-	return q.Save(q.List())
 }
 
 // mergeStrings adds normalised addresses to a set, keeping it sorted.
