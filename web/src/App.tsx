@@ -10,6 +10,7 @@ import { Icon, type IconName } from './components/Icon'
 import { Login } from './components/Login'
 import { TopBar } from './components/TopBar'
 import { Browser } from './components/Browser'
+import { Workspace } from './components/Workspace'
 import { ShareDialog } from './components/ShareDialog'
 import { ChangePassword } from './components/ChangePassword'
 import { SharesDialog } from './components/SharesDialog'
@@ -31,6 +32,7 @@ export function App() {
   // being taken to it are different amounts of help.
   const [menuOpen, setMenuOpen] = useState(false)
   const [sharePath, setSharePath] = useState<string | null>(null)
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
   const [showShares, setShowShares] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
   // An anonymous visitor asked to sign in. Kept separate from the session so
@@ -251,7 +253,12 @@ export function App() {
           onNavigate={navigate}
           onError={report}
           onShare={setSharePath}
+          onOpenWorkspace={setWorkspaceRoot}
         />
+      )}
+
+      {workspaceRoot !== null && (
+        <Workspace root={workspaceRoot} onError={report} onClose={() => setWorkspaceRoot(null)} />
       )}
 
       {sharePath !== null && (
