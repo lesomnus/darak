@@ -238,6 +238,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/files/", s.authedOrAnon(s.handleDelete))
 	mux.HandleFunc("POST /api/dirs/", s.authedOrAnon(s.handleMkdir))
 	mux.HandleFunc("POST /api/rename/", s.authedOrAnon(s.handleRename))
+	mux.HandleFunc("POST /api/move/", s.authedOrAnon(s.handleMove))
 	mux.HandleFunc("GET /api/mode/", s.authedOrAnon(s.handleModeInfo))
 	// Changing a mode is an ownership act, not a file op: kept to signed-in users
 	// so an anonymous visitor cannot re-permission a public folder's contents.
@@ -669,6 +670,57 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	if dst == p {
 		// Renaming to the current name is a no-op, not an error.
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.cfg.FS.Move(r.Context(), user, p, dst); err != nil {
+		writeFSError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMove relocates a file or directory INTO another directory, keeping its
+// name. The body carries the destination directory; the server appends the
+// source's own basename, so a move only ever relocates — it cannot rename in
+// the same gesture, which keeps this the mirror image of handleRename (rename
+// stays put and changes the name; move keeps the name and changes where).
+//
+// The real guards are below it: vfs.Move refuses to cross a permission domain,
+// so a drag can never carry a file from one home or team into another, and its
+// RENAME_NOREPLACE makes a move onto a name already taken fail with 409 rather
+// than destroy what is there. The helper opens both as the user, so the kernel
+// decides whether this person may write either side.
+//
+// POST /api/move/<path>  {"dir": "teams/design/archive"}
+func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
+	user, p := userOf(r), requestPath(r, "/api/move/")
+	if p == "" {
+		writeError(w, http.StatusBadRequest, "no path")
+		return
+	}
+	var body struct {
+		Dir string `json:"dir"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	dir := strings.Trim(strings.TrimSpace(body.Dir), "/")
+	if dir == "" {
+		writeError(w, http.StatusBadRequest, "no destination")
+		return
+	}
+	dst := path.Join(dir, path.Base(p))
+	if dst == p {
+		// Already where it is being dropped: a no-op, not an error.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// A directory cannot be moved inside itself: the kernel would refuse it with
+	// EINVAL, but saying so as a 400 up front is clearer than a filesystem errno,
+	// and stops a drag onto a folder's own descendant from looking like a server
+	// fault.
+	if dst == p || strings.HasPrefix(dst, p+"/") {
+		writeError(w, http.StatusBadRequest, "폴더를 자기 자신 안으로 옮길 수 없습니다")
 		return
 	}
 	if err := s.cfg.FS.Move(r.Context(), user, p, dst); err != nil {

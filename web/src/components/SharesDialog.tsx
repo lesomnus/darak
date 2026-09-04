@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { ShareLink } from '../types'
+import { useDialogs } from '../lib/dialogs'
 import { copyToClipboard } from './ShareDialog'
 
 export function SharesDialog({ onClose }: { onClose: () => void }) {
+  const dialogs = useDialogs()
   const ref = useRef<HTMLDialogElement>(null)
   const [links, setLinks] = useState<ShareLink[] | null>(null)
   const [error, setError] = useState('')
@@ -22,7 +24,13 @@ export function SharesDialog({ onClose }: { onClose: () => void }) {
   }, [load])
 
   async function revoke(link: ShareLink) {
-    if (!confirm(`이 링크를 폐기합니다. 받은 사람은 더 이상 열 수 없습니다.\n\n${link.name}`)) return
+    const ok = await dialogs.confirm({
+      title: '링크를 폐기할까요?',
+      message: `"${link.name}" 링크를 받은 사람은 더 이상 열 수 없습니다.`,
+      danger: true,
+      confirmLabel: '폐기',
+    })
+    if (!ok) return
     try {
       await api.revokeShare(link.token)
       await load()

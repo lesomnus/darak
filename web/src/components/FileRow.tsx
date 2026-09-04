@@ -18,8 +18,11 @@ export interface Row extends Folded {
   match: Match | null
 }
 
+const DRAG_TYPE = 'application/x-darak-path'
+
 export function FileRow({
   row,
+  path,
   inTrash,
   favourite,
   onOpen,
@@ -28,8 +31,11 @@ export function FileRow({
   onToggleFavourite,
   onChmod,
   onRename,
+  onMove,
 }: {
   row: Row
+  /** This entry's full path from the served root. */
+  path: string
   inTrash: boolean
   favourite: boolean
   onOpen: () => void
@@ -39,8 +45,14 @@ export function FileRow({
   onToggleFavourite: () => void
   onChmod: () => void
   onRename: () => void
+  /** Move `from` into a directory `toDir`. Absent where a move cannot land here
+   *  (an anonymous or read-only listing, the trash); when present, this row is a
+   *  drag source, and a directory row is also a drop target. */
+  onMove?: (from: string, toDir: string) => void
 }) {
   const entry = row.entry
+  const [dropActive, setDropActive] = useState(false)
+  const isDropTarget = Boolean(onMove) && entry.dir && !inTrash
   // Whether this row's dropdown machinery has been built yet, and whether it is
   // showing. See the comment at the trigger below.
   const [armed, setArmed] = useState(false)
@@ -82,8 +94,58 @@ export function FileRow({
       data-locked={entry.accessible === false || undefined}
       role="button"
       tabIndex={0}
+      // A drag source when moving is possible here. The dragged path travels in
+      // a private type, so the page's OS-file-drop handler ignores it and only a
+      // folder row (below) treats it as a move.
+      draggable={Boolean(onMove) && !inTrash}
+      data-drop={dropActive || undefined}
+      onDragStart={
+        onMove
+          ? (ev) => {
+              ev.dataTransfer.setData(DRAG_TYPE, path)
+              ev.dataTransfer.effectAllowed = 'move'
+            }
+          : undefined
+      }
+      onDragOver={
+        isDropTarget
+          ? (ev) => {
+              if (!ev.dataTransfer.types.includes(DRAG_TYPE)) return
+              ev.preventDefault()
+              ev.dataTransfer.dropEffect = 'move'
+              setDropActive(true)
+            }
+          : undefined
+      }
+      onDragLeave={isDropTarget ? () => setDropActive(false) : undefined}
+      onDrop={
+        isDropTarget && onMove
+          ? (ev) => {
+              ev.preventDefault()
+              ev.stopPropagation()
+              setDropActive(false)
+              const from = ev.dataTransfer.getData(DRAG_TYPE)
+              // Not itself, and not a no-op onto its own folder (the mover also
+              // guards the latter).
+              if (from && from !== path) onMove(from, path)
+            }
+          : undefined
+      }
       onClick={onOpen}
       onKeyDown={onKeyDown}
+      // Right-click opens the same actions menu the ⋯ button does, since that
+      // is the gesture people reach for. It anchors to the ⋯ trigger (the row's
+      // right edge) rather than the cursor -- the same menu, one fewer place to
+      // aim. Arming mounts the Radix machinery exactly as a click on ⋯ would.
+      onContextMenu={
+        hasMenu
+          ? (ev) => {
+              ev.preventDefault()
+              setArmed(true)
+              setOpen(true)
+            }
+          : undefined
+      }
     >
       <span className="icon" data-kind={kind}>
         <Icon name={kind} />

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { filesUrl } from '../api'
+import { useDialogs } from '../lib/dialogs'
 import { fetchBytes, resolveTheme } from '../preview/bytes'
 import { renderersFor, toPreviewFile, type Cleanup } from '../preview/registry'
 import type { Entry } from '../types'
@@ -28,6 +29,7 @@ export function PreviewModal({
   onClose: () => void
   onError: (message: string) => void
 }) {
+  const dialogs = useDialogs()
   const ref = useRef<HTMLDialogElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
 
@@ -107,8 +109,17 @@ export function PreviewModal({
   }
 
   // A dirty editor should not vanish on a stray Escape/backdrop click.
-  function requestClose() {
-    if (dirty && !window.confirm('저장하지 않은 변경이 있습니다. 닫을까요?')) return
+  async function requestClose() {
+    if (
+      dirty &&
+      !(await dialogs.confirm({
+        title: '닫을까요?',
+        message: '저장하지 않은 변경이 사라집니다.',
+        danger: true,
+        confirmLabel: '닫기',
+      }))
+    )
+      return
     onClose()
   }
 
@@ -119,7 +130,7 @@ export function PreviewModal({
       onClose={onClose}
       onCancel={(e) => {
         e.preventDefault()
-        requestClose()
+        void requestClose()
       }}
     >
       <header className="preview-head">
@@ -152,7 +163,7 @@ export function PreviewModal({
           <a className="button ghost" href={filesUrl(path)}>
             다운로드
           </a>
-          <button type="button" className="icon" aria-label="닫기" onClick={requestClose}>
+          <button type="button" className="icon" aria-label="닫기" onClick={() => void requestClose()}>
             ✕
           </button>
         </span>
