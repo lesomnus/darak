@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, filesUrl } from '../api'
+import { useDialogs } from '../lib/dialogs'
 import { fetchBytes, resolveTheme } from '../preview/bytes'
 import { renderersFor, toPreviewFile, type Cleanup, type Renderer } from '../preview/registry'
 import type { Entry } from '../types'
@@ -30,6 +31,7 @@ export function Workspace({
   onError: (message: string) => void
   onClose: () => void
 }) {
+  const dialogs = useDialogs()
   const [tabs, setTabs] = useState<Tab[]>([])
   const [active, setActive] = useState<string | null>(null)
   // path -> whether that tab has unsaved changes. Kept here, not in the tab
@@ -47,8 +49,17 @@ export function Workspace({
   }, [])
 
   const close = useCallback(
-    (path: string) => {
-      if (dirty[path] && !window.confirm('저장하지 않은 변경이 있습니다. 이 탭을 닫을까요?')) return
+    async (path: string) => {
+      if (
+        dirty[path] &&
+        !(await dialogs.confirm({
+          title: '이 탭을 닫을까요?',
+          message: '저장하지 않은 변경이 사라집니다.',
+          danger: true,
+          confirmLabel: '닫기',
+        }))
+      )
+        return
       setTabs((cur) => {
         const next = cur.filter((t) => t.path !== path)
         // Closing the active tab moves focus to its neighbour, not to nothing.
@@ -60,28 +71,35 @@ export function Workspace({
         return rest
       })
     },
-    [dirty],
+    [dirty, dialogs],
   )
 
   const anyDirty = Object.values(dirty).some(Boolean)
-  function requestClose() {
-    if (anyDirty && !window.confirm('저장하지 않은 변경이 있는 탭이 있습니다. 편집기를 닫을까요?'))
+  const requestClose = useCallback(async () => {
+    if (
+      anyDirty &&
+      !(await dialogs.confirm({
+        title: '편집기를 닫을까요?',
+        message: '저장하지 않은 변경이 있는 탭이 있습니다.',
+        danger: true,
+        confirmLabel: '닫기',
+      }))
+    )
       return
     onClose()
-  }
+  }, [anyDirty, dialogs, onClose])
 
   // Escape closes the workspace (with the dirty guard), matching the modal.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault()
-        requestClose()
+        void requestClose()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anyDirty])
+  }, [requestClose])
 
   return (
     <div className="workspace" role="dialog" aria-modal="true" aria-label={`${root} 편집기`}>
@@ -90,7 +108,7 @@ export function Workspace({
           <Icon name="folder" size={16} />
           {root}
         </span>
-        <button type="button" className="icon" aria-label="편집기 닫기" onClick={requestClose}>
+        <button type="button" className="icon" aria-label="편집기 닫기" onClick={() => void requestClose()}>
           <Icon name="close" size={18} />
         </button>
       </header>
@@ -121,7 +139,7 @@ export function Workspace({
                       type="button"
                       className="ws-tab-x"
                       aria-label={`${baseName(t.path)} 닫기`}
-                      onClick={() => close(t.path)}
+                      onClick={() => void close(t.path)}
                     >
                       <Icon name="close" size={13} />
                     </button>

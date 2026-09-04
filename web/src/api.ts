@@ -46,6 +46,10 @@ function renameUrl(path: string): string {
   return '/api/rename/' + path.split('/').map(encodeURIComponent).join('/')
 }
 
+function moveUrl(path: string): string {
+  return '/api/move/' + path.split('/').map(encodeURIComponent).join('/')
+}
+
 /**
  * Turns the server's answer into something a person can act on.
  *
@@ -155,6 +159,15 @@ export const api = {
    */
   rename: (path: string, name: string) =>
     request<void>(renameUrl(path), { method: 'POST', body: { name } }),
+
+  /**
+   * Moves a file or directory INTO another directory, keeping its name. `dir` is
+   * the destination directory; the server appends the source's basename. The
+   * move cannot cross a permission domain (home <-> team) and never overwrites an
+   * existing name (409). This is what a drag-and-drop onto a folder calls.
+   */
+  move: (path: string, dir: string) =>
+    request<void>(moveUrl(path), { method: 'POST', body: { dir } }),
 
   /**
    * Walks below `path` and yields the names that match, as they are found.

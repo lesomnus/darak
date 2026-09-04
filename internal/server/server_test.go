@@ -994,3 +994,77 @@ func TestRename(t *testing.T) {
 		}
 	})
 }
+
+func TestMove(t *testing.T) {
+	h := newHarness(t, fakeAuth{ok: true})
+	c := h.login("alice")
+	mk := func(rel, data string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(h.root, rel), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkdir := func(rel string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(h.root, rel), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func(rel string) bool {
+		_, err := os.Stat(filepath.Join(h.root, rel))
+		return err == nil
+	}
+
+	t.Run("moves a file into a subdirectory, keeping its name", func(t *testing.T) {
+		mk("homes/alice/note.txt", "hi")
+		mkdir("homes/alice/archive")
+		rec := h.do("POST", "/api/move/homes/alice/note.txt", strings.NewReader(`{"dir":"homes/alice/archive"}`), c)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("got %d %s", rec.Code, rec.Body)
+		}
+		if exists("homes/alice/note.txt") || !exists("homes/alice/archive/note.txt") {
+			t.Fatal("the file was not moved on disk")
+		}
+	})
+
+	// The whole safety story: a move may not carry a file out of its permission
+	// domain (here, alice's home) into another (bob's), even for a signed-in user
+	// -- vfs.Move refuses it before the helper is asked.
+	t.Run("refuses to move across a permission domain", func(t *testing.T) {
+		mk("homes/alice/leak.txt", "secret")
+		mkdir("homes/bob")
+		rec := h.do("POST", "/api/move/homes/alice/leak.txt", strings.NewReader(`{"dir":"homes/bob"}`), c)
+		if rec.Code == http.StatusNoContent {
+			t.Fatal("a cross-domain move must not succeed")
+		}
+		if !exists("homes/alice/leak.txt") || exists("homes/bob/leak.txt") {
+			t.Fatal("a refused move must leave the file where it was")
+		}
+	})
+
+	// RENAME_NOREPLACE again: dropping onto a directory that already holds that
+	// name fails rather than destroying the file there.
+	t.Run("refuses to overwrite an existing name at the destination", func(t *testing.T) {
+		mk("homes/alice/dup.txt", "new")
+		mkdir("homes/alice/dest")
+		mk("homes/alice/dest/dup.txt", "old")
+		rec := h.do("POST", "/api/move/homes/alice/dup.txt", strings.NewReader(`{"dir":"homes/alice/dest"}`), c)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("got %d, want 409", rec.Code)
+		}
+		if got, _ := os.ReadFile(filepath.Join(h.root, "homes/alice/dest/dup.txt")); string(got) != "old" {
+			t.Fatalf("the destination file was clobbered: %q", got)
+		}
+	})
+
+	t.Run("refuses to move a directory inside itself", func(t *testing.T) {
+		mkdir("homes/alice/box/inner")
+		rec := h.do("POST", "/api/move/homes/alice/box", strings.NewReader(`{"dir":"homes/alice/box/inner"}`), c)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("got %d, want 400", rec.Code)
+		}
+		if !exists("homes/alice/box/inner") {
+			t.Fatal("a refused move must leave the directory intact")
+		}
+	})
+}

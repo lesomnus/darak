@@ -10,6 +10,7 @@ import { FileRow, type Row } from './FileRow'
 import { ModeDialog } from './ModeDialog'
 import { PreviewModal } from './PreviewModal'
 import { previewable, toPreviewFile } from '../preview/registry'
+import { useDialogs } from '../lib/dialogs'
 import { Icon } from './Icon'
 
 interface UploadState {
@@ -40,6 +41,7 @@ export function Browser({
   /** Opens this directory in the workspace editor (tree + tabs). */
   onOpenWorkspace?: (path: string) => void
 }) {
+  const dialogs = useDialogs()
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [loadError, setLoadError] = useState('')
   const [upload, setUpload] = useState<UploadState | null>(null)
@@ -167,10 +169,12 @@ export function Browser({
   )
 
   async function remove(entry: Entry) {
-    const message = inTrash
-      ? `"${entry.name}"을(를) 완전히 지웁니다. 되돌릴 수 없습니다.`
-      : `"${entry.name}"을(를) 휴지통으로 보냅니다.`
-    if (!confirm(message)) return
+    const ok = await dialogs.confirm(
+      inTrash
+        ? { title: '완전히 지울까요?', message: `"${entry.name}"을(를) 되돌릴 수 없이 지웁니다.`, danger: true, confirmLabel: '완전히 지우기' }
+        : { title: '휴지통으로 보낼까요?', message: `"${entry.name}"을(를) 휴지통으로 보냅니다.`, confirmLabel: '휴지통으로' },
+    )
+    if (!ok) return
     try {
       await api.remove(path + '/' + entry.name)
       await reload()
@@ -180,10 +184,10 @@ export function Browser({
   }
 
   async function mkdir() {
-    const name = prompt('새 폴더 이름')
+    const name = await dialogs.prompt({ title: '새 폴더', placeholder: '폴더 이름', confirmLabel: '만들기' })
     if (!name) return
     try {
-      await api.mkdir(path + '/' + name)
+      await api.mkdir(path + '/' + name.trim())
       await reload()
     } catch (e) {
       onError(e instanceof Error ? e.message : '만들지 못했습니다.')
@@ -193,7 +197,7 @@ export function Browser({
   async function rename(entry: Entry) {
     // Prefilled with the current name so a small edit is a small gesture; the
     // server keeps it in this folder, so this only ever changes the name.
-    const answer = prompt('새 이름', entry.name)
+    const answer = await dialogs.prompt({ title: '이름 변경', initial: entry.name, confirmLabel: '변경' })
     if (answer === null) return
     const next = answer.trim()
     if (!next || next === entry.name) return

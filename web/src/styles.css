@@ -2060,3 +2060,35 @@ dialog menu {
     width: 11rem;
   }
 }
+
+/* --- app dialogs (styled confirm/prompt, replacing window.confirm/prompt) ----
+   .app-dialog is a <dialog>, so it inherits the base dialog chrome above; these
+   only add the heading, the prompt input, and the action row. .dialog-actions
+   and button.danger are shared with the other dialogs (ModeDialog, ChangePassword,
+   Admin), which used the classes before anything styled them. */
+.app-dialog h3 {
+  margin: 0 0 0.35rem;
+  font-size: var(--t-lg);
+  letter-spacing: -0.01em;
+}
+.app-dialog .dialog-message {
+  margin: 0 0 0.4rem;
+}
+.app-dialog input[type='text'] {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+button.danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+button.danger:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
