@@ -183,6 +183,20 @@ export function Browser({
     }
   }
 
+  // Move a dragged entry into a folder in this listing. The destination is a
+  // directory PATH; the server keeps the entry's own name. A drop onto the
+  // folder the entry already sits in is a no-op, not a round trip.
+  async function moveInto(from: string, toDir: string) {
+    const base = from.slice(from.lastIndexOf('/') + 1)
+    if (`${toDir}/${base}` === from) return
+    try {
+      await api.move(from, toDir)
+      await reload()
+    } catch (e) {
+      onError(e instanceof Error ? e.message : '옮기지 못했습니다.')
+    }
+  }
+
   async function mkdir() {
     const name = await dialogs.prompt({ title: '새 폴더', placeholder: '폴더 이름', confirmLabel: '만들기' })
     if (!name) return
@@ -222,7 +236,11 @@ export function Browser({
     <div
       className={dragging ? 'browser dragging' : 'browser'}
       onDragOver={(e) => {
-        if (!canWrite) return
+        // Only files dragged in from the OS raise the upload hint. An internal
+        // row being dragged onto a folder carries our own type instead, and is
+        // handled by the row it lands on -- reacting to it here would flash the
+        // whole-folder "drop to upload" overlay over a move.
+        if (!canWrite || !e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
         setDragging(true)
       }}
@@ -232,6 +250,7 @@ export function Browser({
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false)
       }}
       onDrop={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
         setDragging(false)
         void uploadFiles([...e.dataTransfer.files])
@@ -372,6 +391,7 @@ export function Browser({
                 <FileRow
                   key={entry.name}
                   row={row}
+                  path={child}
                   inTrash={inTrash}
                   favourite={isFavourite(child)}
                   onOpen={() => {
@@ -387,6 +407,10 @@ export function Browser({
                   onToggleFavourite={() => onToggleFavourite(child)}
                   onChmod={() => setChmodding({ path: child, entry })}
                   onRename={() => void rename(entry)}
+                  // Drag a row onto a folder to move it there. Only offered where
+                  // a write could succeed (inside a permission domain, not the
+                  // trash); the kernel still has the final say on the drop.
+                  onMove={canWrite && !inTrash ? moveInto : undefined}
                 />
               )
             })}

@@ -2092,3 +2092,10 @@ button.danger {
 button.danger:hover:not(:disabled) {
   filter: brightness(0.94);
 }
+
+/* A row that a dragged entry is hovering over as a move target. */
+.row[data-drop] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: var(--r-md);
+}
