@@ -26,6 +26,7 @@ export function Browser({
   onNavigate,
   onError,
   onShare,
+  onOpenWorkspace,
 }: {
   path: string
   /** What was typed in the header's search box. Filters this listing only. */
@@ -36,6 +37,8 @@ export function Browser({
   onError: (message: string) => void
   /** Absent for an anonymous visitor: the share routes need a signed-in user. */
   onShare?: (path: string) => void
+  /** Opens this directory in the workspace editor (tree + tabs). */
+  onOpenWorkspace?: (path: string) => void
 }) {
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -251,6 +254,15 @@ export function Browser({
           <Icon name="trash" size={17} />
           휴지통
         </button>
+        {/* Open the whole folder in the editor. Only where it makes sense: a
+            real directory in the tree, never the trash (you edit things on
+            their way in, not on their way out). */}
+        {onOpenWorkspace && !inTrash && canWrite && (
+          <button type="button" className="ghost" onClick={() => onOpenWorkspace(path)}>
+            <Icon name="pencil" size={17} />
+            편집기로 열기
+          </button>
+        )}
         {/* On the toolbar rather than only in a row's menu, because the folder
             you want to keep is usually the one you are standing in -- you got
             here, and now you want to get back. */}
