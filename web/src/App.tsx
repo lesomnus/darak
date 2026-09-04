@@ -37,6 +37,11 @@ export function App() {
   // cancelling returns them to the public folders they were browsing rather
   // than to a locked-out screen.
   const [wantsLogin, setWantsLogin] = useState(false)
+  // The names of the folders anonymous visitors may open, so a deep link that
+  // is NOT one of them sends an unauthenticated visitor to sign in rather than
+  // to a permission-denied listing. null while it is still being fetched; only
+  // asked for when there is no real session to begin with.
+  const [publicNames, setPublicNames] = useState<Set<string> | null>(null)
   // Whether to OFFER the page. The gate is on the server, on every route, so
   // this only decides whether a link is drawn -- a browser that lies to itself
   // reaches nothing it could not reach anyway.
@@ -76,6 +81,22 @@ export function App() {
     }
   }, [session.state])
 
+  // Only an anonymous visitor needs the public-folder list, and only to decide
+  // whether the path they arrived at is one they may see without signing in.
+  useEffect(() => {
+    if (!(session.state === 'in' && session.me.anonymous)) return
+    let cancelled = false
+    api
+      .publicFolders()
+      .then((r) => !cancelled && setPublicNames(new Set(r.folders.map((f) => f.name))))
+      // An empty set on failure is the safe answer: it treats every deep link as
+      // private, so the worst case is offering a sign-in, not exposing a folder.
+      .catch(() => !cancelled && setPublicNames(new Set()))
+    return () => {
+      cancelled = true
+    }
+  }, [session])
+
   // A filter belongs to the directory it was typed in. Carrying it to the next
   // one shows an empty folder that is not empty, with the reason sitting in a
   // box at the top of the screen that nobody re-reads after they have used it
@@ -109,10 +130,26 @@ export function App() {
 
   if (session.state === 'unknown') return null
   const anonymous = session.state === 'in' && session.me.anonymous === true
-  // The login screen shows when there is no session at all, or when an anonymous
-  // visitor asked for it. In the anonymous case cancelling returns them to the
-  // public folders, so the screen is not a dead end.
-  if (session.state === 'out' || wantsLogin) {
+
+  // A deep link an unauthenticated visitor cannot open anonymously should take
+  // them to sign in, not to an empty permission-denied listing. Home and the
+  // operator stand-in are never that; a path under a declared public folder is
+  // reachable without signing in, so it is not either. The path lives in the
+  // URL, so signing in re-renders straight onto it -- "come back to where I
+  // was" needs no extra bookkeeping.
+  const atLanding = path === '' || path === ADMIN_PATH
+  const deepLinkNeedsLogin =
+    anonymous && !atLanding && publicNames !== null && !isPublicPath(path, publicNames)
+
+  // While the public-folder list is still loading, hold rather than flash the
+  // anonymous listing and then bounce it to sign-in.
+  if (anonymous && !atLanding && publicNames === null) return null
+
+  // The login screen shows when there is no session at all, when an anonymous
+  // visitor asked for it, or when they followed a private deep link. Cancelling
+  // is not a dead end: a private link returns to the public landing, an
+  // asked-for sign-in returns to what they were browsing.
+  if (session.state === 'out' || wantsLogin || deepLinkNeedsLogin) {
     // usePlaces is called unconditionally above, so this early return does not
     // skip a hook.
     return (
@@ -122,7 +159,14 @@ export function App() {
           setSession({ state: 'in', me })
           setWantsLogin(false)
         }}
-        onCancel={anonymous ? () => setWantsLogin(false) : undefined}
+        onCancel={
+          anonymous
+            ? () => {
+                if (deepLinkNeedsLogin) navigate('')
+                setWantsLogin(false)
+              }
+            : undefined
+        }
       />
     )
   }
@@ -437,3 +481,17 @@ function PlaceRow({
  * `teams` are), so this can never collide with a real path.
  */
 const ADMIN_PATH = 'admin'
+
+/**
+ * Whether an anonymous visitor may open this path without signing in.
+ *
+ * The roster opens folders to anonymous visitors under `teams/<name>`, so a
+ * path is public when its top team is a declared public folder; anything below
+ * it rides on the same grant and the kernel decides the rest. Everything else —
+ * a home folder, a private team — is not, and following a link to one while
+ * signed out is the case that should offer a sign-in.
+ */
+function isPublicPath(path: string, publicNames: Set<string>): boolean {
+  const seg = path.split('/')
+  return seg[0] === 'teams' && seg[1] !== undefined && publicNames.has(seg[1])
+}
