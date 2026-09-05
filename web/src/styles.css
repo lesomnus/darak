@@ -2099,3 +2099,126 @@ button.danger:hover:not(:disabled) {
   box-shadow: inset 0 0 0 2px var(--accent);
   border-radius: var(--r-md);
 }
+
+/* --- view controls (list/grid, density, sort, columns) --------------------- */
+.view-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+/* A segmented two-button toggle for list vs grid. */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.seg button {
+  display: flex;
+  align-items: center;
+  padding: 0.35rem 0.5rem;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.seg button + button {
+  border-left: 1px solid var(--line);
+}
+.seg button:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.seg button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Menu extras used by the view-options dropdown. */
+.menu-label {
+  padding: 0.4rem 0.6rem 0.2rem;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.menu-check {
+  width: 1rem;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+.menu-hint {
+  margin-left: auto;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+
+/* --- grid view ------------------------------------------------------------- */
+/* Each grid-row is one measured [data-row]; the column count is set inline so
+   the virtualiser and the layout agree on how many cards share a row. */
+.listing.grid .grid-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+.listing.grid .row.card {
+  position: relative;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+  /* A FIXED height, not a floor: the virtualiser measures one grid-row and
+     assumes the rest match, so a one-line name and a two-line name must occupy
+     the same box or the window's math drifts as you scroll. The name is clamped
+     to two lines (below) to keep that promise. */
+  height: 6.5rem;
+  min-height: 0;
+  padding: 0.9rem 0.5rem 0.7rem;
+  gap: 0.45rem;
+  border: 1px solid var(--line);
+}
+.listing.grid .row.card .icon {
+  width: auto;
+}
+.listing.grid .row.card .icon svg {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+.listing.grid .row.card .name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+  line-height: 1.3;
+}
+.listing.grid .row.card .metas {
+  justify-content: center;
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+/* The actions menu tucks into the card's corner instead of a trailing column. */
+.listing.grid .row.card .actions {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+}
+
+/* --- density --------------------------------------------------------------- */
+.listing.list.density-compact .row {
+  min-height: 2.35rem;
+  padding: 0.25rem 0.6rem;
+  gap: 0.6rem;
+}
+.listing.grid.density-compact .row.card {
+  height: 5rem;
+  padding: 0.55rem 0.4rem 0.45rem;
+}
+.listing.grid.density-compact .row.card .icon svg {
+  width: 2rem;
+  height: 2rem;
+}

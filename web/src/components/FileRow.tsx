@@ -23,6 +23,8 @@ const DRAG_TYPE = 'application/x-darak-path'
 export function FileRow({
   row,
   path,
+  variant = 'row',
+  columns = { size: true, date: true },
   inTrash,
   favourite,
   onOpen,
@@ -36,6 +38,12 @@ export function FileRow({
   row: Row
   /** This entry's full path from the served root. */
   path: string
+  /** 'row' in the list, 'card' in the grid. Only the list carries the [data-row]
+   *  the virtualiser measures; a card sits inside a grid-row that carries it. */
+  variant?: 'row' | 'card'
+  /** Which meta columns the list shows. Ignored by a card (it shows only its
+   *  name and, for a file, its size). */
+  columns?: { size: boolean; date: boolean }
   inTrash: boolean
   favourite: boolean
   onOpen: () => void
@@ -51,6 +59,7 @@ export function FileRow({
   onMove?: (from: string, toDir: string) => void
 }) {
   const entry = row.entry
+  const isCard = variant === 'card'
   const [dropActive, setDropActive] = useState(false)
   const isDropTarget = Boolean(onMove) && entry.dir && !inTrash
   // Whether this row's dropdown machinery has been built yet, and whether it is
@@ -83,11 +92,12 @@ export function FileRow({
   const hasMenu = !(entry.dir && isTrashFolder)
 
   return (
-    // data-row is what the virtualiser measures: it needs one real, laid-out
-    // row to know how tall the rest would be.
+    // In the list, data-row is what the virtualiser measures. In the grid the
+    // grid-row wrapper carries it instead, so a card must NOT — or the
+    // virtualiser would size a listing by one card and lay cards over each other.
     <div
-      className="row"
-      data-row
+      className={isCard ? 'row card' : 'row'}
+      data-row={!isCard || undefined}
       // Only the teams root sets accessible; a false means this user is not in
       // the team (nor a reader), so the folder is shown locked and dimmed. It
       // stays clickable — the kernel is the real gate, this is only the hint.
@@ -163,9 +173,15 @@ export function FileRow({
           becomes a line of its own under the name. Without something to move as
           a unit the name was being squeezed to two characters to keep them on
           the same line. */}
+      {/* A card shows only its size (folders none); the list shows whichever
+          columns are turned on. Hiding a column removes it from the DOM rather
+          than the layout, so a narrow list is not paying to lay out text it was
+          told not to show. */}
       <span className="metas">
-        <span className="meta size">{entry.dir ? '' : formatSize(entry.size)}</span>
-        <span className="meta date">{formatDate(entry.mod_time)}</span>
+        {(isCard || columns.size) && (
+          <span className="meta size">{entry.dir ? '' : formatSize(entry.size)}</span>
+        )}
+        {!isCard && columns.date && <span className="meta date">{formatDate(entry.mod_time)}</span>}
       </span>
 
       <span className="actions">

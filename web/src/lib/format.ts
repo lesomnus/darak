@@ -86,9 +86,41 @@ export const compareNames = collator.compare
  * because that is what the listing's resume cursor needs).
  */
 export function sortEntries(entries: Entry[]): Entry[] {
-  return [...entries].sort((a, b) =>
-    a.dir === b.dir ? compareNames(a.name, b.name) : a.dir ? -1 : 1,
-  )
+  return sortEntriesBy(entries, 'name', 'asc')
+}
+
+/** What a listing can be ordered by. */
+export type SortKey = 'name' | 'mtime' | 'size'
+export type SortDir = 'asc' | 'desc'
+
+/**
+ * Folders always come first — a file manager that scatters folders through the
+ * files by size or date is not one anybody wants — and the chosen key orders
+ * within each group. `desc` flips only that within-group comparison, so folders
+ * stay on top either way.
+ */
+export function sortEntriesBy(entries: Entry[], key: SortKey, dir: SortDir): Entry[] {
+  const sign = dir === 'desc' ? -1 : 1
+  return [...entries].sort((a, b) => {
+    if (a.dir !== b.dir) return a.dir ? -1 : 1
+    let cmp: number
+    switch (key) {
+      case 'mtime':
+        // A directory has no meaningful size, so date is the only non-name key
+        // it sorts by; string compare on RFC 3339 is chronological.
+        cmp = a.mod_time < b.mod_time ? -1 : a.mod_time > b.mod_time ? 1 : 0
+        break
+      case 'size':
+        cmp = a.size - b.size
+        break
+      default:
+        cmp = compareNames(a.name, b.name)
+    }
+    // Ties (and equal folders under a size/date sort) fall back to name, so the
+    // order is always total and stable rather than however the sort landed.
+    if (cmp === 0) return compareNames(a.name, b.name)
+    return cmp * sign
+  })
 }
 
 export const TRASH_DIR = '.trash'
