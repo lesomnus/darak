@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, filesUrl } from '../api'
 import type { Entry } from '../types'
-import { compareNames, domainRoot, sortEntries, TRASH_DIR } from '../lib/format'
+import { compareNames, domainRoot, sortEntriesBy, TRASH_DIR } from '../lib/format'
 import { foldOf, needleOf, scoreFolded, type Match } from '../lib/fuzzy'
 import { useWindowVirtual } from '../lib/useVirtual'
+import { useViewPrefs } from '../lib/useViewPrefs'
 import { useDeepSearch } from '../lib/useDeepSearch'
 import { DeepResults } from './DeepResults'
 import { FileRow, type Row } from './FileRow'
+import { ViewControls } from './ViewControls'
 import { ModeDialog } from './ModeDialog'
 import { PreviewModal } from './PreviewModal'
 import { previewable, toPreviewFile } from '../preview/registry'
 import { useDialogs } from '../lib/dialogs'
 import { Icon } from './Icon'
+
+// The narrowest a grid card may get before another column would crowd it. Cols
+// are computed in JS (not CSS auto-fill) because the virtualiser has to know how
+// many items sit on a row to map an index to a position.
+const GRID_CARD_MIN = 150
 
 interface UploadState {
   current: string
@@ -42,6 +49,7 @@ export function Browser({
   onOpenWorkspace?: (path: string) => void
 }) {
   const dialogs = useDialogs()
+  const prefs = useViewPrefs()
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [loadError, setLoadError] = useState('')
   const [upload, setUpload] = useState<UploadState | null>(null)
@@ -49,9 +57,13 @@ export function Browser({
   const [chmodding, setChmodding] = useState<{ path: string; entry: Entry } | null>(null)
   const [previewing, setPreviewing] = useState<{ path: string; entry: Entry } | null>(null)
 
-  // Sorted once per listing rather than once per render: at 50,000 entries a
-  // Korean-collation sort is not something to redo because a drag started.
-  const sorted = useMemo(() => (entries === null ? null : sortEntries(entries)), [entries])
+  // Sorted once per listing (or when the sort choice changes) rather than once
+  // per render: at 50,000 entries a Korean-collation sort is not something to
+  // redo because a drag started.
+  const sorted = useMemo(
+    () => (entries === null ? null : sortEntriesBy(entries, prefs.sortKey, prefs.sortDir)),
+    [entries, prefs.sortKey, prefs.sortDir],
+  )
 
   // Everything the matcher needs, computed ONCE per listing rather than once
   // per keystroke: normalising and folding 50,000 names is the expensive half,
@@ -86,14 +98,37 @@ export function Browser({
     return out
   }, [index, needle])
 
+  // Grid columns are measured, not chosen by CSS auto-fill: the virtualiser has
+  // to know how many cards sit on a row to map an item's index to a vertical
+  // position. Measured off a wrapper that is always present.
+  const gridWrapRef = useRef<HTMLDivElement>(null)
+  const [gridCols, setGridCols] = useState(1)
+  useEffect(() => {
+    if (prefs.view !== 'grid') return
+    const el = gridWrapRef.current
+    if (!el) return
+    const measure = () => setGridCols(Math.max(1, Math.floor(el.clientWidth / GRID_CARD_MIN)))
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [prefs.view])
+
+  const cols = prefs.view === 'grid' ? gridCols : 1
+  const itemCount = visible?.length ?? 0
+  // In grid mode the virtualiser counts ROWS of `cols` cards, and each rendered
+  // grid-row carries the [data-row] it measures; in list mode a row IS an item.
+  const rowCount = prefs.view === 'grid' ? Math.ceil(itemCount / cols) : itemCount
+
   // A filtered list is a DIFFERENT list, so the window goes back to its top --
   // otherwise typing while scrolled deep leaves you past the end of the result
-  // and looking at nothing.
+  // and looking at nothing. View, column count and density change the row height
+  // the virtualiser measured, so they reset it too.
   const virtual = useWindowVirtual({
-    count: visible?.length ?? 0,
+    count: rowCount,
     // Separated by an escape that cannot occur in a path, so no pair of
     // (directory, query) can collide with another and skip the reset.
-    resetKey: `${path}\u0000${needle.text}`,
+    resetKey: `${path}\u0000${needle.text}\u0000${prefs.view}\u0000${cols}\u0000${prefs.density}`,
   })
   useEffect(() => {
     window.scrollTo(0, 0)
@@ -232,6 +267,41 @@ export function Browser({
     onNavigate(`${domain}/${TRASH_DIR}`)
   }
 
+  // One row, rendered the same way whether it sits in the list or the grid —
+  // only the variant (and, for the list, which columns show) differs, so the
+  // action wiring is not written twice.
+  const renderCell = (row: Row, variant: 'row' | 'card') => {
+    const entry = row.entry
+    const child = path + '/' + entry.name
+    return (
+      <FileRow
+        key={entry.name}
+        row={row}
+        path={child}
+        variant={variant}
+        columns={prefs.columns}
+        inTrash={inTrash}
+        favourite={isFavourite(child)}
+        onOpen={() => {
+          if (entry.dir) onNavigate(child)
+          // Previewable in place; otherwise a download, where the browser
+          // streams it and Range/resume come from the server.
+          else if (previewable(toPreviewFile(child, entry))) setPreviewing({ path: child, entry })
+          else window.location.href = filesUrl(child)
+        }}
+        onShare={onShare ? () => onShare(child) : undefined}
+        onDelete={() => void remove(entry)}
+        onToggleFavourite={() => onToggleFavourite(child)}
+        onChmod={() => setChmodding({ path: child, entry })}
+        onRename={() => void rename(entry)}
+        // Drag a row onto a folder to move it there. Only offered where a write
+        // could succeed (inside a permission domain, not the trash); the kernel
+        // still has the final say on the drop.
+        onMove={canWrite && !inTrash ? moveInto : undefined}
+      />
+    )
+  }
+
   return (
     <div
       className={dragging ? 'browser dragging' : 'browser'}
@@ -299,6 +369,10 @@ export function Browser({
           <Icon name={starred ? 'star-on' : 'star'} size={17} />
           즐겨찾기
         </button>
+
+        {/* View, density, sort and column controls, pushed to the right so the
+            file actions stay on the left where the eye starts. */}
+        <ViewControls prefs={prefs} />
       </div>
 
       {dragging && <div className="drop-hint">여기에 놓으면 올라갑니다</div>}
@@ -370,53 +444,44 @@ export function Browser({
         )}
 
         {visible !== null && (
-          <div
-            ref={virtual.ref}
-            // Focusable so there is somewhere to put focus when the row that
-            // held it is scrolled out and unmounted. Without this, focus falls
-            // to <body> and the next Tab restarts from the top of the page.
-            tabIndex={-1}
-            onFocusCapture={() => {
-              focusWasInList.current = true
-            }}
-          >
-            {/* Spacers stand in for the rows that are not rendered, so the
-                scrollbar describes the whole directory rather than the part
-                currently in the document. */}
-            {virtual.padTop > 0 && <div style={{ height: virtual.padTop }} aria-hidden="true" />}
-            {visible.slice(virtual.start, virtual.end).map((row) => {
-              const entry = row.entry
-              const child = path + '/' + entry.name
-              return (
-                <FileRow
-                  key={entry.name}
-                  row={row}
-                  path={child}
-                  inTrash={inTrash}
-                  favourite={isFavourite(child)}
-                  onOpen={() => {
-                    if (entry.dir) onNavigate(child)
-                    // Previewable in place; otherwise a download, where the
-                    // browser streams it and Range/resume come from the server.
-                    else if (previewable(toPreviewFile(child, entry)))
-                      setPreviewing({ path: child, entry })
-                    else window.location.href = filesUrl(child)
-                  }}
-                  onShare={onShare ? () => onShare(child) : undefined}
-                  onDelete={() => void remove(entry)}
-                  onToggleFavourite={() => onToggleFavourite(child)}
-                  onChmod={() => setChmodding({ path: child, entry })}
-                  onRename={() => void rename(entry)}
-                  // Drag a row onto a folder to move it there. Only offered where
-                  // a write could succeed (inside a permission domain, not the
-                  // trash); the kernel still has the final say on the drop.
-                  onMove={canWrite && !inTrash ? moveInto : undefined}
-                />
-              )
-            })}
-            {virtual.padBottom > 0 && (
-              <div style={{ height: virtual.padBottom }} aria-hidden="true" />
-            )}
+          <div ref={gridWrapRef} className={`listing ${prefs.view} density-${prefs.density}`}>
+            <div
+              ref={virtual.ref}
+              // Focusable so there is somewhere to put focus when the row that
+              // held it is scrolled out and unmounted. Without this, focus falls
+              // to <body> and the next Tab restarts from the top of the page.
+              tabIndex={-1}
+              onFocusCapture={() => {
+                focusWasInList.current = true
+              }}
+            >
+              {/* Spacers stand in for the rows (grid ROWS, in grid mode) that are
+                  not rendered, so the scrollbar describes the whole directory
+                  rather than the part currently in the document. */}
+              {virtual.padTop > 0 && <div style={{ height: virtual.padTop }} aria-hidden="true" />}
+              {prefs.view === 'grid'
+                ? // Each rendered grid-row holds `cols` cards and carries the
+                  // [data-row] the virtualiser measures, so windowing counts rows
+                  // of cards rather than cards.
+                  Array.from({ length: virtual.end - virtual.start }, (_, i) => {
+                    const r = virtual.start + i
+                    const slice = visible.slice(r * cols, r * cols + cols)
+                    return (
+                      <div
+                        key={r}
+                        data-row
+                        className="grid-row"
+                        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                      >
+                        {slice.map((row) => renderCell(row, 'card'))}
+                      </div>
+                    )
+                  })
+                : visible.slice(virtual.start, virtual.end).map((row) => renderCell(row, 'row'))}
+              {virtual.padBottom > 0 && (
+                <div style={{ height: virtual.padBottom }} aria-hidden="true" />
+              )}
+            </div>
           </div>
         )}
 
