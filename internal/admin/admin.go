@@ -73,6 +73,11 @@ type Config struct {
 type Admin struct {
 	cfg   Config
 	usage *usageCache
+	// decls backs path routing only (views.go), which runs per filesystem
+	// operation and cannot afford a subprocess each time. Every other reader of
+	// the roster — the ones that decide an authorization — still calls
+	// Declaration and gets it fresh.
+	decls declCache
 }
 
 func New(cfg Config) (*Admin, error) {

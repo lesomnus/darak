@@ -312,6 +312,12 @@ func realMain() error {
 	}
 
 	fs := &vfs.FS{Pool: pool}
+	if adm != nil {
+		// A reader group is a read-only mount of the team's folder inside the
+		// reader's own folder, so a reader asking for teams/<team> has to be sent
+		// there. The roster is what knows; the kernel still decides.
+		fs.Reroute = adm.ReroutePath
+	}
 	if acts != nil {
 		fs.Record = func(user, action, p, to string) {
 			e := activity.Event{
