@@ -178,6 +178,10 @@ darak은 요청자 uid로 헬퍼를 띄웁니다(`SysProcAttr.Credential`). root
 
 네임스페이스 라벨이 `pod-security.kubernetes.io/enforce: restricted` 또는 `baseline`이면 **파드가 아예 생성되지 않습니다.** `privileged` 네임스페이스에 격리해서 두세요.
 
+roster 에 `readers` 를 쓴다면 여기에 **`CAP_SYS_ADMIN`**(사실상 `privileged: true`)이 더 필요합니다. 읽기 전용 그룹은 파일 권한이 아니라 **마운트**로 걸리기 때문입니다([access-control.md 5번](access-control.md)).
+
+> ⚠️ **마운트는 마운트 네임스페이스 소속이라 파드마다 각자 만들어야 합니다.** SMB 파드가 만든 뷰를 darak 파드가 볼 수 없습니다. 웹 파드가 `usersync apply --nss-only` 를 돌린다면 그것으로 충분합니다 — 이 액션만은 `--nss-only` 에서도 건너뛰지 않습니다. 빠뜨리면 그 파드의 reader 가 권한 오류를 보는 것으로 끝나지, 권한이 넓어지지는 않습니다.
+
 ### 6. 445를 어떻게 내보낼 것인가
 
 `NodePort`는 안 됩니다 — 기본 범위가 30000–32767이라 445를 못 씁니다.

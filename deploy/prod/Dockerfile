@@ -17,8 +17,15 @@
 # deploy/prod/entrypoint.sh depends on), and `all: <profile>` cohorts, whose
 # resolved membership internal/admin/teams.go now reads out of `usersync roster`.
 #
+# It also carries the reader views, and for this image that is not optional. A
+# reader group is a read-only mount, mounts belong to a mount namespace, and the
+# SMB pod cannot make this pod's — so --nss-only keeps that one action and the
+# entrypoint's `usersync apply --nss-only` is what puts the views here. An older
+# pin builds an image whose readers can see nothing over the web, while the SMB
+# pod serves them normally: a split nothing else in the deployment would explain.
+#
 # Replace this with a tag the moment usersync publishes one.
-ARG USERSYNC_VERSION=34f7fa03dc0f372d763eee35e021331536ac53b4
+ARG USERSYNC_VERSION=42d0513bed22a911abc8c15b248acfcb1493af16
 
 FROM golang:1.26-trixie AS build
 WORKDIR /src

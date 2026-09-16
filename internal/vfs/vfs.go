@@ -75,6 +75,23 @@ type FS struct {
 	// Called only after the operation succeeded. A record of something that did
 	// not happen is worse than no record.
 	Record func(user string, action, p, to string)
+
+	// Reroute maps the path a person asked for to the path this user's helper
+	// should actually open. Nil means they are the same, which is the case for
+	// everything except a reader group.
+	//
+	// A reader is granted by a read-only mount of the team's folder placed inside
+	// their own group's folder, so the data they were given has two paths and
+	// only one of them lets them in. Applying that here, at the single point
+	// where a request leaves for the helper, keeps it out of everywhere else: the
+	// path a share link holds, the path the activity log records and the path the
+	// interface shows all stay the team's own, because that is what the person
+	// means by it.
+	//
+	// It decides nothing. Sending a reader to the view lets the kernel allow a
+	// read it was always meant to allow; a wrong answer here — or none — ends in
+	// EACCES or EROFS, never in access that should not exist.
+	Reroute func(ctx context.Context, user, p string) string
 }
 
 // note records a change if recording is enabled.
@@ -92,6 +109,14 @@ func (f *FS) now() time.Time {
 }
 
 func (f *FS) do(ctx context.Context, user string, req *wire.Request) (*wire.Response, *os.File, error) {
+	if f.Reroute != nil {
+		r := *req
+		r.Path = f.Reroute(ctx, user, r.Path)
+		if r.Path2 != "" {
+			r.Path2 = f.Reroute(ctx, user, r.Path2)
+		}
+		req = &r
+	}
 	return f.Pool.Do(ctx, user, req)
 }
 
