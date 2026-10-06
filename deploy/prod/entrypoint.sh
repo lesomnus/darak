@@ -22,6 +22,10 @@ STATE_DIR=${DARAK_STATE:-/var/lib/darak}
 ADMIN_GROUP=${DARAK_ADMIN_GROUP:-admin}
 ADMIN_GID=${DARAK_ADMIN_GID:-2000}
 ADMIN_MEMBERS=${DARAK_ADMIN_MEMBERS:-}
+# Optional persistent directory for the account cache (see "accounts" below).
+# Unset = no cache: every start recreates the accounts. Must not be the SMB pod's
+# directory — the two pods keep different account sets.
+ACCOUNTS_DIR=${USERSYNC_ACCOUNTS_DIR:-}
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
@@ -195,6 +199,15 @@ fi
 log "accounts (nss-only)"
 cd "$CONFIG_DIR"
 
+# The container's /etc/passwd is an image file, so every start used to create
+# all 82 users and 27 groups from scratch — 15 s before darak could listen
+# (2026-10-05). The cache puts back what usersync made last time, and apply only
+# does what the roster changed. The script comes from the pinned usersync
+# version; its header has the details.
+# shellcheck source=/dev/null
+source /usr/local/lib/usersync/accounts-cache.sh
+accounts_cache_init
+
 # Static check first, with no system access: a typo in the roster should be a
 # refusal to start, not a half-applied set of accounts.
 usersync validate
@@ -222,26 +235,34 @@ esac
 # sits BELOW usersync's managed window, so usersync neither creates it nor
 # strips it: `usermod -G` from the nss-only reconcile preserves a below-window
 # supplementary group, so the admin group survives every hot-reload. Membership
-# is reapplied on every start from DARAK_ADMIN_MEMBERS — derived state, like the
-# accounts.
+# is SET (not added to) on every start from DARAK_ADMIN_MEMBERS — derived state,
+# like the accounts. Set, because the account cache brings the group back with
+# its last members, and someone taken off the list must not stay an operator.
 if [[ -n $ADMIN_GROUP ]]; then
 	log "operator group ($ADMIN_GROUP, gid $ADMIN_GID)"
 	if ! getent group "$ADMIN_GROUP" >/dev/null; then
 		groupadd -g "$ADMIN_GID" "$ADMIN_GROUP" ||
 			die "could not create the $ADMIN_GROUP group at gid $ADMIN_GID"
 	fi
+	operators=()
 	for u in ${ADMIN_MEMBERS//,/ }; do
 		if ! id "$u" >/dev/null 2>&1; then
 			echo "WARNING: $u is in DARAK_ADMIN_MEMBERS but is not an account; skipping" >&2
 			continue
 		fi
-		usermod -aG "$ADMIN_GROUP" "$u"
+		operators+=("$u")
 		log "  $u is an operator"
 	done
+	gpasswd -M "$(
+		IFS=,
+		echo "${operators[*]}"
+	)" "$ADMIN_GROUP" >/dev/null ||
+		die "could not set the members of $ADMIN_GROUP"
 	if [[ -z $ADMIN_MEMBERS ]]; then
 		echo "note: DARAK_ADMIN_MEMBERS is empty, so nobody can reach the operator page" >&2
 	fi
 fi
+save_accounts
 
 # --- winbind (for ntlm_auth) ------------------------------------------------
 #
@@ -267,6 +288,7 @@ wbinfo -p >/dev/null 2>&1 || die "winbindd did not become ready; web logins woul
 if [[ ${mode:-manage} != audit ]]; then
 	usersync watch --nss-only &
 	log "nss hot-reload watcher (pid $!)"
+	accounts_cache_follow
 else
 	log "nss hot-reload watcher off (mode=audit)"
 fi
