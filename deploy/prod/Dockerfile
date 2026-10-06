@@ -24,8 +24,11 @@
 # pin builds an image whose readers can see nothing over the web, while the SMB
 # pod serves them normally: a split nothing else in the deployment would explain.
 #
+# It also carries deploy/accounts-cache.sh, which the entrypoint sources so a
+# restart restores the accounts instead of recreating them (copied out below).
+#
 # Replace this with a tag the moment usersync publishes one.
-ARG USERSYNC_VERSION=42d0513bed22a911abc8c15b248acfcb1493af16
+ARG USERSYNC_VERSION=11ab820478e3624dd55d858385d5dc14ad769e81
 
 FROM golang:1.26-trixie AS build
 WORKDIR /src
@@ -64,6 +67,10 @@ RUN CGO_ENABLED=0 go install -trimpath \
 		echo; \
 		exit 1; \
 	} >&2
+# The account cache script, from the SAME module version the binary was built
+# from — so the two cannot drift apart. go install leaves the source in the
+# module cache; nothing is fetched twice.
+RUN cp "$(go env GOMODCACHE)"/github.com/lesomnus/usersync@*/deploy/accounts-cache.sh /accounts-cache.sh
 
 FROM debian:trixie-slim AS app
 
@@ -100,6 +107,7 @@ RUN ( [ -f /etc/apt/sources.list.d/debian.sources ] \
 
 COPY --from=build /out/darak /out/darak-helper /usr/local/bin/
 COPY --from=usersync /go/bin/usersync /usr/local/bin/usersync
+COPY --from=usersync /accounts-cache.sh /usr/local/lib/usersync/accounts-cache.sh
 COPY deploy/prod/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/darak /usr/local/bin/darak-helper \
 	/usr/local/bin/usersync /usr/local/bin/entrypoint.sh
