@@ -78,7 +78,7 @@ services:
     # Debian rather than Alpine: esbuild and rollup ship separate glibc and musl
     # binaries, and an Alpine container next to a glibc lockfile resolves to the
     # wrong one in a way whose error message names a package that is installed.
-    image: node:22-bookworm-slim
+    image: node:24-bookworm-slim
     working_dir: /app
     ports:
       - "${DARAK_BIND:-127.0.0.1}:5173:5173"
