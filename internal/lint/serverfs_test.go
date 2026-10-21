@@ -60,8 +60,7 @@ var pathCalls = map[string]map[string]bool{
 	// io/fs is deliberately absent. Its functions take an fs.FS, and the only
 	// ways to get one backed by the real filesystem — os.DirFS and os.Root.FS —
 	// are already refused above. Everything else is an embed.FS or a test
-	// fixture, where nothing is resolved at all: the UI reading its own compiled
-	// -in assets is not the thing this rule is about, and flagging it would teach
+	// fixture, where nothing is resolved at all, and flagging those would teach
 	// whoever hits it that the check cries wolf.
 }
 
@@ -72,10 +71,18 @@ var pathCalls = map[string]map[string]bool{
 //   - internal/integration builds real accounts and directory trees as root on
 //     purpose; it is a test fixture, not the server.
 //   - internal/lint is this check, which reads source files.
+//   - internal/ui serves the interface out of a directory, and is here for the
+//     helper's reason rather than as an exception to it: ui.Open refuses to run
+//     as root, and only `darak ui` (cmd/darak/ui.go) imports the package — the
+//     API server reaches the interface over HTTP, through internal/uiproc, as an
+//     unprivileged child or a separate deployment. What it resolves, it resolves
+//     as somebody the kernel actually checks. TestOnlyDarakUIImportsUI holds
+//     the second half.
 var helperOnly = map[string]bool{
 	"internal/helper":      true,
 	"internal/integration": true,
 	"internal/lint":        true,
+	"internal/ui":          true,
 	"cmd/darak-helper":     true,
 }
 
@@ -395,5 +402,57 @@ func serve(name string) {
 	}
 	if !got["os.DirFS"] {
 		t.Error("os.DirFS must still be flagged: it is the door from an fs.FS to the real filesystem")
+	}
+}
+
+// internal/ui is allowed to resolve paths only because nothing running as root
+// ever calls it. ui.Open refusing euid 0 is the runtime half of that; this is
+// the half that holds before anything runs: the one file that imports it is the
+// `darak ui` subcommand. The API server wiring a ui.Handler back in, however
+// convenient, would put directory serving into the root process again.
+func TestOnlyDarakUIImportsUI(t *testing.T) {
+	const uiPkg = "github.com/lesomnus/darak/internal/ui"
+	const allowed = "cmd/darak/ui.go"
+
+	root := repoRoot(t)
+	fset := token.NewFileSet()
+	var importers []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "dist", "testdata", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, spec := range f.Imports {
+			if p, _ := strconv.Unquote(spec.Path.Value); p == uiPkg {
+				rel, _ := filepath.Rel(root, path)
+				importers = append(importers, filepath.ToSlash(rel))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range importers {
+		if rel != allowed {
+			t.Errorf("%s imports %s; only %s may. The API server runs as root, and reaches "+
+				"the interface over HTTP through internal/uiproc instead", rel, uiPkg, allowed)
+		}
+	}
+	if len(importers) == 0 {
+		t.Errorf("nothing imports %s; if `darak ui` moved, move %q with it", uiPkg, allowed)
 	}
 }

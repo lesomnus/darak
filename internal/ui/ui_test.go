@@ -1,50 +1,44 @@
 package ui
 
 import (
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
-// The embedded build is committed, so `go build` needs no Node. If it were ever
-// missing the package would not compile at all — but an EMPTY directory embeds
-// fine and produces a server that answers every page with nothing, which is a
-// far quieter failure.
-func TestEmbeddedBuildIsPresent(t *testing.T) {
-	sub, err := fs.Sub(content, "dist")
-	if err != nil {
-		t.Fatal(err)
-	}
-	index, err := fs.ReadFile(sub, "index.html")
-	if err != nil {
-		t.Fatalf("no index.html in the embedded build — run scripts/build-ui.sh: %v", err)
-	}
-	if !strings.Contains(string(index), `id="root"`) {
-		t.Errorf("index.html has no mount point:\n%s", index)
-	}
-	// It must reference the bundle, or the page loads and does nothing.
-	if !strings.Contains(string(index), "/assets/") {
-		t.Errorf("index.html references no built asset:\n%s", index)
-	}
+// A stand-in for a Vite build: the document, one script, one stylesheet. The
+// real build is not in the repository, so the handler is tested against the
+// shape it has rather than against whatever was last built.
+var build = fstest.MapFS{
+	"index.html": {Data: []byte(`<!doctype html><html><head>` +
+		`<script type="module" src="/assets/index-abc123.js"></script>` +
+		`<link rel="stylesheet" href="/assets/index-def456.css"></head>` +
+		`<body><div id="root"></div></body></html>`)},
+	"assets/index-abc123.js":  {Data: []byte("console.log(1)")},
+	"assets/index-def456.css": {Data: []byte("body{}")},
+	"favicon.svg":             {Data: []byte("<svg/>")},
+}
 
-	assets, err := fs.ReadDir(sub, "assets")
-	if err != nil || len(assets) == 0 {
-		t.Fatalf("the embedded build has no assets — run scripts/build-ui.sh: %v", err)
+func TestCheck(t *testing.T) {
+	if err := Check(build); err != nil {
+		t.Fatalf("a well-formed build was refused: %v", err)
 	}
-	var js, css bool
-	for _, a := range assets {
-		js = js || strings.HasSuffix(a.Name(), ".js")
-		css = css || strings.HasSuffix(a.Name(), ".css")
-	}
-	if !js || !css {
-		t.Errorf("expected a script and a stylesheet, got %v", assets)
+	for name, fsys := range map[string]fstest.MapFS{
+		"empty":       {},
+		"no root":     {"index.html": {Data: []byte(`<script src="/assets/a.js"></script>`)}},
+		"no bundle":   {"index.html": {Data: []byte(`<div id="root"></div>`)}},
+		"assets only": {"assets/a.js": {Data: []byte("x")}},
+	} {
+		if err := Check(fsys); err == nil {
+			t.Errorf("%s: accepted, want an error", name)
+		}
 	}
 }
 
 func TestHandlerServesTheApp(t *testing.T) {
-	h := Handler()
+	h := Handler(build)
 
 	// A deep link must return the document rather than 404: the page reads the
 	// location itself, so reloading inside a folder has to work.
@@ -66,7 +60,7 @@ func TestHandlerServesTheApp(t *testing.T) {
 // the document handler, and a future rewrite could quietly turn it into a 404.
 func TestIndexHTMLRedirectsToRoot(t *testing.T) {
 	rec := httptest.NewRecorder()
-	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/index.html", nil))
+	Handler(build).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/index.html", nil))
 	if rec.Code != http.StatusMovedPermanently {
 		t.Fatalf("GET /index.html = %d, want 301", rec.Code)
 	}
@@ -79,15 +73,10 @@ func TestIndexHTMLRedirectsToRoot(t *testing.T) {
 // and can be cached hard. The document must NOT be, or a deploy keeps serving
 // the previous bundle to everyone who already has the page.
 func TestCachingRules(t *testing.T) {
-	sub, _ := fs.Sub(content, "dist")
-	assets, err := fs.ReadDir(sub, "assets")
-	if err != nil || len(assets) == 0 {
-		t.Fatal("no assets to check")
-	}
+	h := Handler(build)
 
 	rec := httptest.NewRecorder()
-	h := Handler()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/"+assets[0].Name(), nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/index-abc123.js", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("asset = %d", rec.Code)
 	}
@@ -95,9 +84,11 @@ func TestCachingRules(t *testing.T) {
 		t.Errorf("asset Cache-Control = %q, want immutable", cc)
 	}
 
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-cache") {
-		t.Errorf("document Cache-Control = %q, want no-cache", cc)
+	for _, path := range []string{"/", "/favicon.svg", "/teams/design"} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-cache") {
+			t.Errorf("%s Cache-Control = %q, want no-cache", path, cc)
+		}
 	}
 }

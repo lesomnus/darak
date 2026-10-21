@@ -15,8 +15,7 @@ cd "$(dirname "$0")/.."
 tag="${1:-darak-test}"
 
 echo "==> building $tag"
-# ./dist, not dist: the latter would also drop internal/ui/dist, which is
-# the embedded interface and has to be in the image.
+# ./dist, the repo-root build output; the interface is not needed here.
 tar -c --exclude=.git --exclude=node_modules --exclude=./dist . | docker build -q -f Dockerfile.test -t "$tag" -
 
 echo "==> running"

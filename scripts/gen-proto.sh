@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate the control-plane gRPC code from proto/ into control/controlpb,
 # which is committed and built by `go build` alone — buf is a dependency of
-# CHANGING the contract, never of building or running the server, the same
-# property scripts/build-ui.sh keeps for the interface.
+# CHANGING the contract, never of building or running the server.
 #
 #   scripts/gen-proto.sh          regenerate
 #   scripts/gen-proto.sh --check  regenerate and fail if the committed output is

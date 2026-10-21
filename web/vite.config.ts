@@ -13,18 +13,16 @@ const apiOrigin = process.env.DARAK_ORIGIN ?? 'http://localhost:8080'
 // passes VITE_POLL=1 through from the environment.
 const poll = process.env.VITE_POLL === '1'
 
-// The build lands in internal/ui/dist, which is committed and embedded into the
-// binary. Node is therefore a BUILD-time dependency only: `go build` alone still
-// produces a server with nothing to install beside it, which is the property the
-// rest of this project is arranged around.
+// The build lands in web/dist, which is NOT committed. The image builds it in a
+// stage of its own and puts it where `darak ui` serves it from; a deployment
+// that ships the interface separately does the same with its own build.
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: '../internal/ui/dist',
+    outDir: 'dist',
     emptyOutDir: true,
     // Hashed asset names, so a deploy cannot serve a stale bundle out of a
-    // cache. emptyOutDir keeps the committed directory from accumulating the
-    // old ones.
+    // cache. emptyOutDir keeps a local build from accumulating the old ones.
     assetsDir: 'assets',
   },
   server: {

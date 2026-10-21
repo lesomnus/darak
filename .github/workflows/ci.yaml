@@ -31,11 +31,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The interface is BUILD OUTPUT that is committed (internal/ui/dist), which is
-  # what lets `go build` alone produce a working server. Nothing inside a Go
-  # test can know whether it is current -- only rebuilding can -- so that check
-  # lives here, and the image job waits for it. Publishing an image built from a
-  # stale bundle is exactly the failure the committed-output arrangement invites.
+  # The interface. It is not committed and not in the Go binary: the image
+  # builds it in a stage of its own (deploy/prod/Dockerfile) and `darak ui`
+  # serves it. A pull request never builds that image, so the build is proved
+  # here, and the image job waits for it.
   web:
     runs-on: ubuntu-latest
     steps:
@@ -46,17 +45,13 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Type-check and test
+      - name: Type-check, test and build
         working-directory: web
         run: |
           npm ci
           npx tsc --noEmit
           npm test
-
-      # Fails if rebuilding web/ produces something other than what is
-      # committed. It restores the tree afterwards, so this is safe to run here.
-      - name: internal/ui/dist is current
-        run: scripts/build-ui.sh --check
+          npm run build
 
   image:
     runs-on: ubuntu-latest

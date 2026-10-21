@@ -1,4 +1,5 @@
-# Production image: darak (the WEB tier), its helper, usersync, and the Samba
+# Production image: darak (the WEB tier), its helper, the built interface,
+# usersync, and the Samba
 # CLIENTS darak drives — winbindd + ntlm_auth (login), smbpasswd (password
 # change), pdbedit (the SSO gate reading `status: disabled`). It does NOT run
 # smbd: the SMB server is a separate image (ghcr.io/lesomnus/usersync-smb, in the
@@ -72,6 +73,19 @@ RUN CGO_ENABLED=0 go install -trimpath \
 # module cache; nothing is fetched twice.
 RUN cp "$(go env GOMODCACHE)"/github.com/lesomnus/usersync@*/deploy/accounts-cache.sh /accounts-cache.sh
 
+# The interface. Built here and not committed: Node is a dependency of the
+# IMAGE, not of `go build`, and the Go binary does not contain the result —
+# `darak ui` serves it from /usr/share/darak/ui as an unprivileged process.
+#
+# Debian rather than Alpine for the reason deploy/dev gives: esbuild and rollup
+# ship separate glibc and musl binaries, and the lockfile is resolved on glibc.
+FROM node:24-bookworm-slim AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM debian:trixie-slim AS app
 
 # darak runs no smbd, only the samba CLIENTS it drives:
@@ -108,14 +122,24 @@ RUN ( [ -f /etc/apt/sources.list.d/debian.sources ] \
 COPY --from=build /out/darak /out/darak-helper /usr/local/bin/
 COPY --from=usersync /go/bin/usersync /usr/local/bin/usersync
 COPY --from=usersync /accounts-cache.sh /usr/local/lib/usersync/accounts-cache.sh
+# Owned by root and readable by all: the interface process reads it as nobody,
+# and nothing that serves it may write to it.
+COPY --from=web --chown=0:0 /src/web/dist /usr/share/darak/ui
 COPY deploy/prod/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/darak /usr/local/bin/darak-helper \
 	/usr/local/bin/usersync /usr/local/bin/entrypoint.sh
 
-# 8080 web only. The SMB pod (usersync-smb) owns 445.
+# 8080 either way: the API server (with the interface behind it) or, run alone,
+# the interface. The SMB pod (usersync-smb) owns 445.
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 	CMD curl -fsS -o /dev/null -k "${DARAK_HEALTH_URL:-http://localhost:8080/}"
+
+# Unprivileged by default, so that running the image with nothing said serves
+# the interface and nothing else (`darak ui`). The API server needs root to
+# start helpers as each user, and has to be ASKED for with `user: root` — the
+# entrypoint decides which of the two this is by that alone.
+USER 65534:65534
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

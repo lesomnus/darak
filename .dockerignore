@@ -1,10 +1,12 @@
 # The integration image is built from a tar on stdin; node_modules would make
-# that context enormous and is never needed there — the interface is embedded
-# into the binary as committed output, so the image builds Go only.
+# that context enormous and is never needed there. The images that carry the
+# interface build it from web/ in a Node stage, which runs its own `npm ci`.
+# web/dist is a local build, and the stage makes its own.
 .git
 node_modules
 web/node_modules
-# Only the repo-root build output: internal/ui/dist is the embedded interface.
+web/dist
+# The repo-root build output.
 /dist
 
 # The bake definition and the compose files describe how to build; they are

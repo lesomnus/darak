@@ -6,9 +6,10 @@
 #
 # Two containers, and the split is the point.
 #
-#   darak  is BUILT. It embeds internal/ui/dist and is then told -no-ui, so the
-#          only thing it serves is the API. Changing Go code means rebuilding
-#          this one service; changing the interface does not touch it at all.
+#   darak  is BUILT, and DARAK_UI_DIR="" keeps it from serving the interface the
+#          image carries, so the only thing it serves is the API. Changing Go
+#          code means rebuilding this one service; changing the interface does
+#          not touch it at all.
 #   web    is NOT built. Stock node, with web/ bind-mounted, running Vite. It
 #          proxies /api and /s to darak, which keeps the browser on one origin
 #          and is what makes the session cookie work.
@@ -49,18 +50,18 @@ services:
       # accounts, not two that drift.
       - ../local/config:/etc/darak
     command:
-      # No embedded interface. The one in the binary is whatever was last
-      # committed to internal/ui/dist, and serving it beside the live one is how
-      # an afternoon goes into wondering why an edit did nothing.
-      - -no-ui
       - -brand-name
       - 다락 연구소 (dev)
       - -brand-logo
       - /etc/darak/logo.svg
     environment:
       DARAK_ADMIN_MEMBERS: alice
+      # Empty, not unset: no interface on :8080. The image has a built one, and
+      # serving it beside Vite's live one is how an afternoon goes into wondering
+      # why an edit did nothing.
+      DARAK_UI_DIR: ""
     healthcheck:
-      # NOT `/`, which the local stack uses: with -no-ui there is nothing there.
+      # NOT `/`, which the local stack uses: with no interface there is nothing there.
       # An unauthenticated API route answers 401, which is a perfectly good sign
       # of life -- so this deliberately drops curl's -f, which would read that
       # 401 as a failure.
