@@ -51,7 +51,8 @@ ordinary at the call site. `internal/lint` fails the build if one appears.
 | `internal/server` | HTTP |
 | `internal/share` | capability links |
 | `web` | the browser interface (TypeScript, React, Vite) |
-| `internal/ui` | its build output, embedded |
+| `internal/ui` | `darak ui`: serves its build, unprivileged |
+| `internal/uiproc` | how the server reaches that without serving it |
 | `internal/lint` | the invariant above |
 | `internal/integration` | real users, real modes, real Samba — in a container |
 
@@ -146,18 +147,30 @@ the account regardless).
 
 ## The interface
 
-It lives in `web/` — TypeScript and React, built by Vite into
-`internal/ui/dist`, which is **committed** and embedded into the binary.
+It lives in `web/` — TypeScript and React, built by Vite into `web/dist`. The
+build is **not committed and not in the Go binary**: the image builds it in a
+stage of its own and puts it at `/usr/share/darak/ui`.
 
-That split is the point: Node is a dependency of *changing* the interface, never
-of running or deploying it. `go build` on a clean clone still produces one static
-binary with nothing to install beside it, which is what the deployment target —
-one machine an administrator maintains by hand — actually needs.
+It is served by `darak ui`, a separate process that refuses to run as root. The
+API server is root — it has to start helpers as each user — and a root process
+that resolves a request's path does so with every permission check passing, so
+it does not serve files at all. It stays the one origin the browser talks to,
+and reaches the interface over HTTP, with the session stripped:
+
+| | |
+|---|---|
+| `-ui-dir DIR` | starts `darak ui -dir DIR` as its own child, as `-ui-user` (default `65533:65533`; never root, nor `-anonymous-user`'s uid), restarting it with backoff if it dies |
+| `-ui-upstream URL` | proxies to a `darak ui` deployed on its own |
+| neither | serves only the API |
+
+The image does both halves. Run as its default, unprivileged user it is the
+interface alone; run with `user: root` it is the API server, with the interface
+behind it as a child (or `DARAK_UI_UPSTREAM`).
 
 ```sh
-scripts/build-ui.sh            # rebuild after changing web/; commit the output
-scripts/build-ui.sh --check    # CI: fail if the committed output is stale
-cd web && npm run dev          # live reload, proxying /api/ and /s/ to :8080
+cd web && npm run build                       # → web/dist
+go run ./cmd/darak ui -dir web/dist -addr :8081   # as yourself, not root
+cd web && npm run dev                         # live reload, proxying /api/ and /s/ to :8080
 ```
 
 Or with nothing installed but Docker — a built server plus Vite over a bind
@@ -169,11 +182,10 @@ docker compose -f deploy/dev/docker-compose.yaml up --build   # then :5173
 
 [`deploy/dev/README.md`](deploy/dev/README.md) says what it is and how it
 differs from [`deploy/local`](deploy/local/README.md), which serves the
-committed build the way a deployment does.
+image's build the way a deployment does.
 
-A Go test fails if the embedded build is missing or empty. Whether it is
-*current* can only be checked by rebuilding, which is what `--check` is for —
-nothing inside a Go test can know what the sources would have produced.
+`darak ui` refuses to start on a directory with no `index.html`, or one that
+does not reference a built bundle, rather than serving blank pages.
 
 The mark in the corner — and on the login page, and in the tab title — is the
 operator's, set with `-brand-name` and `-brand-logo`. The image is read once at

@@ -269,6 +269,15 @@ if [[ -n ${DARAK_ANONYMOUS_USER:-} ]]; then
 	anon_args+=(-anonymous-user "$DARAK_ANONYMOUS_USER")
 fi
 
+# The interface, served by `darak ui` as 65533 (the default) over the build in
+# the image.
+# DARAK_UI_DIR set but EMPTY turns it off, which is what deploy/dev does: there
+# the interface is Vite's, on another port.
+ui_args=()
+if [[ -n ${DARAK_UI_DIR-/usr/share/darak/ui} ]]; then
+	ui_args+=(-ui-dir "${DARAK_UI_DIR-/usr/share/darak/ui}")
+fi
+
 log "darak"
 exec /usr/local/bin/darak \
 	-root "$DATA_ROOT" \
@@ -276,5 +285,6 @@ exec /usr/local/bin/darak \
 	-shares "$STATE_DIR/shares.json" \
 	-admin-group "$ADMIN_GROUP" \
 	-secure-cookies=false \
+	"${ui_args[@]}" \
 	"${anon_args[@]}" \
 	"$@"

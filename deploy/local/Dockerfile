@@ -1,7 +1,8 @@
-# Local test image: the server, its helper, and the Samba pieces both paths need.
+# Local test image: the server, its helper, the built interface, and the Samba
+# pieces both paths need.
 #
-# Build context is the repository root, so that internal/ui/dist — the committed
-# interface build — is present and `go build` needs no Node.
+# Build context is the repository root, so that web/ is in it: the interface is
+# built in its own stage and served by `darak ui`, not compiled into the binary.
 FROM golang:1.27-trixie AS build
 
 WORKDIR /src
@@ -17,6 +18,14 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/darak ./cmd/darak \
 FROM golang:1.27-trixie AS usersync
 ARG USERSYNC_VERSION=1f662f4a8588c78282008e85b52b0cba807bc8c5
 RUN CGO_ENABLED=0 go install -trimpath github.com/lesomnus/usersync@${USERSYNC_VERSION}
+
+# The interface, as in deploy/prod.
+FROM node:24-bookworm-slim AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY web/ ./
+RUN npm run build
 
 FROM debian:trixie-slim
 
@@ -40,6 +49,7 @@ RUN apt-get update -qq \
 
 COPY --from=build /out/darak /out/darak-helper /usr/local/bin/
 COPY --from=usersync /go/bin/usersync /usr/local/bin/usersync
+COPY --from=web --chown=0:0 /src/web/dist /usr/share/darak/ui
 COPY deploy/local/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/darak /usr/local/bin/darak-helper /usr/local/bin/usersync
 

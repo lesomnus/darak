@@ -33,6 +33,20 @@ die() {
 	exit 1
 }
 
+# Which of the two this container is, decided by who it runs as.
+#
+# The image's default user is unprivileged, and run that way it is the interface
+# and nothing else: no roster, no winbindd, no accounts — `darak ui` over the
+# build in the image. The API server is what `user: root` asks for. `ui` as the
+# first argument says the same thing explicitly, and still refuses root (darak
+# ui does, not this script).
+UI_DIR=${DARAK_UI_DIR:-/usr/share/darak/ui}
+if [[ ${1:-} == ui || $(id -u) != 0 ]]; then
+	[[ ${1:-} == ui ]] && shift
+	log "darak ui"
+	exec /usr/local/bin/darak ui -dir "$UI_DIR" "$@"
+fi
+
 [[ -f "$CONFIG_DIR/roster.yaml" ]] || die "no roster at $CONFIG_DIR/roster.yaml — mount it"
 [[ -f "$CONFIG_DIR/usersync.yaml" ]] || die "no config at $CONFIG_DIR/usersync.yaml — mount it"
 
@@ -57,6 +71,17 @@ if [[ -n ${DARAK_ANONYMOUS_USER:-} ]]; then
 	getent passwd "$DARAK_ANONYMOUS_USER" >/dev/null ||
 		die "DARAK_ANONYMOUS_USER=$DARAK_ANONYMOUS_USER does not resolve to an account (use an existing one with no groups and no SMB, e.g. nobody)"
 	args+=(-anonymous-user "$DARAK_ANONYMOUS_USER")
+fi
+
+# The interface. darak serves it at / either way, and never from this process:
+# by default it starts `darak ui` over the build in the image as DARAK_UI_USER
+# (65533 — not nobody, which is the usual DARAK_ANONYMOUS_USER, and darak refuses
+# the two sharing a uid), and with DARAK_UI_UPSTREAM it proxies to an interface deployed on its
+# own — this same image, run without `user: root`.
+if [[ -n ${DARAK_UI_UPSTREAM:-} ]]; then
+	args+=(-ui-upstream "$DARAK_UI_UPSTREAM")
+else
+	args+=(-ui-dir "$UI_DIR" -ui-user "${DARAK_UI_USER:-65533:65533}")
 fi
 
 # The control plane: the gRPC address of the service that edits the roster's

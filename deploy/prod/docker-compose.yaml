@@ -91,6 +91,11 @@ services:
       # (mounted at /etc/darak) and name it from there.
       DARAK_BRAND_NAME: ${DARAK_BRAND_NAME:-}
       DARAK_BRAND_LOGO: ${DARAK_BRAND_LOGO:-}
+      # Where the interface comes from. Empty serves the build inside this image,
+      # through a child process running as DARAK_UI_USER; a URL proxies to an
+      # interface deployed separately (this image without `user: root`).
+      DARAK_UI_UPSTREAM: ${DARAK_UI_UPSTREAM:-}
+      DARAK_UI_USER: ${DARAK_UI_USER:-}
       SMB_WORKGROUP: ${SMB_WORKGROUP:-WORKGROUP}
       SMB_SERVER_STRING: ${SMB_SERVER_STRING:-darak}
       TZ: ${TZ:-Asia/Seoul}

@@ -1,2 +1,4 @@
 node_modules/
 tsconfig.tsbuildinfo
+# the build; the image makes its own, and nothing serves this one but `darak ui -dir web/dist`
+dist/

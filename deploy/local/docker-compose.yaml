@@ -11,7 +11,7 @@
 services:
   darak:
     build:
-      # The repository root, so the committed interface build is in the context.
+      # The repository root, so web/ is in the context for the interface build.
       context: ../..
       dockerfile: deploy/local/Dockerfile
     # Root inside the container: starting a helper AS the requesting user is the

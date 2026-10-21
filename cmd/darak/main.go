@@ -3,6 +3,10 @@
 // It runs privileged, because it has to start a helper as each requesting user,
 // and it does no file access of its own: every path is resolved by that helper,
 // with that user's credentials. See docs/helper-protocol.md and nas-design.md.
+//
+// `darak ui` is the other half: the interface, served unprivileged from a
+// directory (ui.go). The API server either starts it as a child (-ui-dir) or is
+// pointed at one deployed elsewhere (-ui-upstream).
 package main
 
 import (
@@ -12,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -30,14 +35,18 @@ import (
 	"github.com/lesomnus/darak/internal/server"
 	"github.com/lesomnus/darak/internal/share"
 	"github.com/lesomnus/darak/internal/sso"
-	"github.com/lesomnus/darak/internal/ui"
+	"github.com/lesomnus/darak/internal/uiproc"
 	"github.com/lesomnus/darak/internal/vfs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
-	if err := realMain(); err != nil {
+	run := realMain
+	if len(os.Args) > 1 && os.Args[1] == "ui" {
+		run = func() error { return runUI(os.Args[2:]) }
+	}
+	if err := run(); err != nil {
 		slog.Error("darak", "err", err)
 		os.Exit(1)
 	}
@@ -59,7 +68,9 @@ func realMain() error {
 		sharesFile    = flag.String("shares", "/var/lib/darak/shares.json", "where share links are kept; must NOT be on the data volume")
 		cookieKeyFile = flag.String("cookie-key-file", "", "file holding the session-cookie signing key (HMAC); empty uses a random per-process key — single replica only")
 		epochsFile    = flag.String("session-epochs", "/var/lib/darak/session-epochs.json", "shared file of per-user session not-before times (password-change logout); must NOT be on the data volume")
-		noUI          = flag.Bool("no-ui", false, "serve only the API")
+		uiDir         = flag.String("ui-dir", "", "the built interface, served by `darak ui` started as -ui-user; empty serves none unless -ui-upstream")
+		uiUser        = flag.String("ui-user", "65533:65533", "who the interface process runs as: a name, or uid:gid; never root, and not -anonymous-user's uid. The default is not nobody because nobody is the usual -anonymous-user")
+		uiUpstream    = flag.String("ui-upstream", "", "URL of a `darak ui` deployed separately, proxied at /; exclusive with -ui-dir")
 		tlsCert       = flag.String("tls-cert", "", "PEM certificate chain; serves HTTPS when set together with -tls-key")
 		tlsKey        = flag.String("tls-key", "", "PEM private key")
 		allowRemapped = flag.Bool("allow-remapped-uids", false, "start even though uids here are not the numbers on disk (see the error this suppresses)")
@@ -145,9 +156,43 @@ func realMain() error {
 		return err
 	}
 
+	// The interface is never served from this process: serving it means resolving
+	// a request's path, and this process is root (internal/uiproc).
 	var web http.Handler
-	if !*noUI {
-		web = ui.Handler()
+	switch {
+	case *uiDir != "" && *uiUpstream != "":
+		return errors.New("-ui-dir and -ui-upstream are exclusive: one says where the interface is")
+	case *uiUpstream != "":
+		target, err := url.Parse(*uiUpstream)
+		if err != nil || target.Scheme == "" || target.Host == "" {
+			return fmt.Errorf("-ui-upstream %q: want an absolute URL like http://ui:8080", *uiUpstream)
+		}
+		web = uiproc.Proxy(target, nil)
+	case *uiDir != "":
+		creds, err := uiproc.ParseUser(*uiUser)
+		if err != nil {
+			return err
+		}
+		if *anonymousUser != "" {
+			same, err := creds.SameUIDAs(*anonymousUser)
+			if err != nil {
+				return fmt.Errorf("-anonymous-user %q: %w", *anonymousUser, err)
+			}
+			if same {
+				return fmt.Errorf("-ui-user %q is the same uid as -anonymous-user %q; give the interface a uid of its own, "+
+					"or the two can signal and trace each other", *uiUser, *anonymousUser)
+			}
+		}
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("cannot find this binary to start `darak ui`: %w", err)
+		}
+		sup, err := uiproc.Start(uiproc.Config{Bin: self, Dir: *uiDir, Creds: creds})
+		if err != nil {
+			return err
+		}
+		defer sup.Close()
+		web = sup.Handler()
 	}
 
 	// Read now rather than per request: this process resolves no path of its own
