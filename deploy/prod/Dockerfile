@@ -30,7 +30,7 @@
 # Replace this with a tag the moment usersync publishes one.
 ARG USERSYNC_VERSION=11ab820478e3624dd55d858385d5dc14ad769e81
 
-FROM golang:1.26-trixie AS build
+FROM golang:1.27-trixie AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -50,7 +50,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 # usersync owns the accounts. It is a separate repository, pinned above so an
 # image is reproducible.
-FROM golang:1.26-trixie AS usersync
+FROM golang:1.27-trixie AS usersync
 ARG USERSYNC_VERSION
 RUN CGO_ENABLED=0 go install -trimpath \
 	github.com/lesomnus/usersync@${USERSYNC_VERSION} \

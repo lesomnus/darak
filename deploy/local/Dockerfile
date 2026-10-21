@@ -2,7 +2,7 @@
 #
 # Build context is the repository root, so that internal/ui/dist — the committed
 # interface build — is present and `go build` needs no Node.
-FROM golang:1.26-trixie AS build
+FROM golang:1.27-trixie AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/darak ./cmd/darak \
 # usersync owns the accounts here exactly as it does in production. Pinned to a
 # commit so the image is reproducible, and so a local stack and a prod stack can
 # be put on the same version deliberately rather than by accident.
-FROM golang:1.26-trixie AS usersync
+FROM golang:1.27-trixie AS usersync
 ARG USERSYNC_VERSION=1f662f4a8588c78282008e85b52b0cba807bc8c5
 RUN CGO_ENABLED=0 go install -trimpath github.com/lesomnus/usersync@${USERSYNC_VERSION}
 
