@@ -55,12 +55,15 @@ export interface Renderer {
 // a browser tab; above these the option is simply not offered and the file is
 // downloaded instead.
 const TEXT_MAX = 8 << 20 // 8 MiB — text/code/editor
-const MEDIA_MAX = 512 << 20 // images/video: the browser streams these fine
+const MEDIA_MAX = 512 << 20 // images, which are fetched whole; video has no ceiling (streamed)
 
 // Extension groups. Deliberately explicit rather than sniffed: the server's
 // Content-Type is a hint, but which VIEWS to offer is a UI decision, and an
 // operator reading this file should see exactly what gets what.
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'apng'])
+// What browsers commonly decode. Whether a given file plays depends on its
+// codec, not its extension, which the renderer reports if it cannot.
+const VIDEO = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv'])
 const CODE = new Set([
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'jsonc', 'go', 'py', 'rs', 'c', 'h', 'cc',
   'cpp', 'hpp', 'java', 'kt', 'rb', 'php', 'cs', 'swift', 'sh', 'bash', 'zsh', 'fish', 'sql',
@@ -124,6 +127,14 @@ const RENDERERS: Renderer[] = [
     load: () => import('./renderers/image').then((m) => m.default),
   },
   {
+    id: 'video',
+    label: '동영상',
+    priority: 100,
+    // No size ceiling: it is streamed in ranges, never held in the tab.
+    match: (f) => VIDEO.has(f.ext),
+    load: () => import('./renderers/video').then((m) => m.default),
+  },
+  {
     id: 'highlight',
     label: '코드',
     priority: 60,
@@ -136,7 +147,7 @@ const RENDERERS: Renderer[] = [
     priority: 50,
     // The universal small-file fallback: any file under the text ceiling can be
     // shown as escaped text, so there is almost always at least one view.
-    match: (f) => f.size <= TEXT_MAX,
+    match: (f) => f.size <= TEXT_MAX && !VIDEO.has(f.ext),
     load: () => import('./renderers/text').then((m) => m.default),
   },
   {
@@ -144,7 +155,7 @@ const RENDERERS: Renderer[] = [
     label: '편집',
     priority: 40,
     match: (f) =>
-      f.size <= TEXT_MAX && (EDITABLE_EXT.has(f.ext) || f.ext === '') && !IMAGE.has(f.ext),
+      f.size <= TEXT_MAX && (EDITABLE_EXT.has(f.ext) || f.ext === '') && !IMAGE.has(f.ext) && !VIDEO.has(f.ext),
     load: () => import('./renderers/edit').then((m) => m.default),
   },
   {
