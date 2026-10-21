@@ -91,6 +91,20 @@ func TestParseUser(t *testing.T) {
 	}
 }
 
+func TestSameUIDAs(t *testing.T) {
+	// root is in every passwd; uid 0 itself is refused elsewhere, so this is only
+	// about the comparison.
+	if same, err := (Creds{UID: 0, GID: 1}).SameUIDAs("root"); err != nil || !same {
+		t.Errorf("uid 0 vs root = %v, %v; want true", same, err)
+	}
+	if same, err := (Creds{UID: 65533, GID: 65533}).SameUIDAs("root"); err != nil || same {
+		t.Errorf("uid 65533 vs root = %v, %v; want false", same, err)
+	}
+	if _, err := (Creds{UID: 1, GID: 1}).SameUIDAs("no-such-user-here"); err == nil {
+		t.Error("an unknown account was compared without an error")
+	}
+}
+
 func TestStartRefusesRoot(t *testing.T) {
 	for _, c := range []Creds{{0, 0}, {0, 1000}, {1000, 0}} {
 		if s, err := Start(Config{Bin: "/bin/true", Dir: "/", Creds: c}); err == nil {

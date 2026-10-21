@@ -159,7 +159,7 @@ and reaches the interface over HTTP, with the session stripped:
 
 | | |
 |---|---|
-| `-ui-dir DIR` | starts `darak ui -dir DIR` as its own child, as `-ui-user` (default `65534:65534`), restarting it with backoff if it dies |
+| `-ui-dir DIR` | starts `darak ui -dir DIR` as its own child, as `-ui-user` (default `65533:65533`; never root, nor `-anonymous-user`'s uid), restarting it with backoff if it dies |
 | `-ui-upstream URL` | proxies to a `darak ui` deployed on its own |
 | neither | serves only the API |
 

@@ -75,12 +75,13 @@ fi
 
 # The interface. darak serves it at / either way, and never from this process:
 # by default it starts `darak ui` over the build in the image as DARAK_UI_USER
-# (nobody), and with DARAK_UI_UPSTREAM it proxies to an interface deployed on its
+# (65533 — not nobody, which is the usual DARAK_ANONYMOUS_USER, and darak refuses
+# the two sharing a uid), and with DARAK_UI_UPSTREAM it proxies to an interface deployed on its
 # own — this same image, run without `user: root`.
 if [[ -n ${DARAK_UI_UPSTREAM:-} ]]; then
 	args+=(-ui-upstream "$DARAK_UI_UPSTREAM")
 else
-	args+=(-ui-dir "$UI_DIR" -ui-user "${DARAK_UI_USER:-65534:65534}")
+	args+=(-ui-dir "$UI_DIR" -ui-user "${DARAK_UI_USER:-65533:65533}")
 fi
 
 # The control plane: the gRPC address of the service that edits the roster's

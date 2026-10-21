@@ -111,6 +111,21 @@ func ParseUser(s string) (Creds, error) {
 	return c, nil
 }
 
+// SameUIDAs reports whether name — an account the server also runs things as,
+// such as -anonymous-user — is the uid the interface would run as.
+//
+// Two processes with one uid can signal and trace each other, so sharing it
+// would let a compromised interface reach the anonymous user's helper, and the
+// other way around. nobody is the natural choice for both, which is why this is
+// checked rather than documented.
+func (c Creds) SameUIDAs(name string) (bool, error) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return false, err
+	}
+	return u.Uid == strconv.FormatUint(uint64(c.UID), 10), nil
+}
+
 // Config is what a Supervisor starts.
 type Config struct {
 	// Bin is the darak binary; the child is `Bin ui -dir Dir -listen-fd 3`.

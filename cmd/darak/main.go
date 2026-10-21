@@ -69,7 +69,7 @@ func realMain() error {
 		cookieKeyFile = flag.String("cookie-key-file", "", "file holding the session-cookie signing key (HMAC); empty uses a random per-process key — single replica only")
 		epochsFile    = flag.String("session-epochs", "/var/lib/darak/session-epochs.json", "shared file of per-user session not-before times (password-change logout); must NOT be on the data volume")
 		uiDir         = flag.String("ui-dir", "", "the built interface, served by `darak ui` started as -ui-user; empty serves none unless -ui-upstream")
-		uiUser        = flag.String("ui-user", "65534:65534", "who the interface process runs as: a name, or uid:gid; never root")
+		uiUser        = flag.String("ui-user", "65533:65533", "who the interface process runs as: a name, or uid:gid; never root, and not -anonymous-user's uid. The default is not nobody because nobody is the usual -anonymous-user")
 		uiUpstream    = flag.String("ui-upstream", "", "URL of a `darak ui` deployed separately, proxied at /; exclusive with -ui-dir")
 		tlsCert       = flag.String("tls-cert", "", "PEM certificate chain; serves HTTPS when set together with -tls-key")
 		tlsKey        = flag.String("tls-key", "", "PEM private key")
@@ -172,6 +172,16 @@ func realMain() error {
 		creds, err := uiproc.ParseUser(*uiUser)
 		if err != nil {
 			return err
+		}
+		if *anonymousUser != "" {
+			same, err := creds.SameUIDAs(*anonymousUser)
+			if err != nil {
+				return fmt.Errorf("-anonymous-user %q: %w", *anonymousUser, err)
+			}
+			if same {
+				return fmt.Errorf("-ui-user %q is the same uid as -anonymous-user %q; give the interface a uid of its own, "+
+					"or the two can signal and trace each other", *uiUser, *anonymousUser)
+			}
 		}
 		self, err := os.Executable()
 		if err != nil {
