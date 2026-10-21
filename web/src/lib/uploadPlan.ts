@@ -71,7 +71,11 @@ export function takeEntries(dt: DataTransfer): FileSystemEntry[] | null {
   const out: FileSystemEntry[] = []
   for (const item of items) {
     const entry = item.webkitGetAsEntry()
-    if (entry) out.push(entry)
+    // Not every drop has entries (one built by a script, some file managers).
+    // Then the plain file list is the only description there is, and returning
+    // a partial or empty list here would upload nothing for those items.
+    if (!entry) return null
+    out.push(entry)
   }
   return out
 }

@@ -471,7 +471,7 @@ export function Browser({
           <span className="muted small progress-label">
             {upload.reading
               ? '올릴 항목을 읽는 중…'
-              : `${upload.current} — ${upload.filesDone.toLocaleString('ko-KR')}/${upload.filesTotal.toLocaleString('ko-KR')}개 · ${formatSize(upload.sent)} / ${formatSize(upload.total)}`}
+              : `${upload.current} — ${upload.filesDone.toLocaleString('ko-KR')}/${upload.filesTotal.toLocaleString('ko-KR')}개 · ${bytesOf(upload.sent)} / ${bytesOf(upload.total)}`}
           </span>
           <button type="button" className="ghost" onClick={() => uploadAbort.current?.abort()}>
             취소
@@ -597,6 +597,12 @@ export function Browser({
       )}
     </div>
   )
+}
+
+// formatSize leaves 0 blank, which is right for a listing's size column and
+// wrong for a progress count that has not started yet.
+function bytesOf(n: number): string {
+  return formatSize(n) || '0 B'
 }
 
 /**
