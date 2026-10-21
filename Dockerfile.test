@@ -9,7 +9,7 @@
 #
 # The tar form exists so this works against a remote or sidecar docker daemon
 # with no bind mounts. See scripts/verify-integration.sh.
-FROM golang:1.26-trixie AS base
+FROM golang:1.27-trixie AS base
 
 # samba + winbind so the ntlm_auth contract is checked against the real thing
 # rather than against what its documentation was read to mean.
