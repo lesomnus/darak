@@ -78,6 +78,57 @@ function explain(status: number, fallback: string): string {
   }
 }
 
+/** The message a failed response carries, or the status explained. */
+function errorOf(status: number, body: string): ApiError {
+  let detail = `요청이 실패했습니다 (${status})`
+  try {
+    const parsed = JSON.parse(body) as { error?: string }
+    if (parsed.error) detail = parsed.error
+  } catch {
+    // Not JSON; the status is all there is.
+  }
+  return new ApiError(status, explain(status, detail))
+}
+
+/**
+ * PUTs one file, reporting bytes sent as they go.
+ *
+ * XMLHttpRequest rather than fetch(): fetch has no upload progress, and a
+ * multi-gigabyte upload with a bar that only moves when a whole file finishes
+ * reads as a hung page. Aborting the signal aborts the request, and the server
+ * discards the partial write (the write protocol only publishes on success).
+ */
+export function uploadFile(
+  path: string,
+  file: Blob,
+  onProgress: (sent: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('aborted', 'AbortError'))
+      return
+    }
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', filesUrl(path))
+    xhr.upload.onprogress = (e) => onProgress(e.loaded)
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(file.size)
+        resolve()
+      } else {
+        reject(errorOf(xhr.status, xhr.responseText))
+      }
+    }
+    xhr.onerror = () => reject(new ApiError(0, '연결이 끊겼습니다.'))
+    xhr.onabort = () => reject(new DOMException('aborted', 'AbortError'))
+    const abort = () => xhr.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    xhr.onloadend = () => signal?.removeEventListener('abort', abort)
+    xhr.send(file)
+  })
+}
+
 interface RequestOptions {
   method?: string
   body?: unknown
@@ -94,16 +145,7 @@ async function request<T>(url: string, opts: RequestOptions = {}): Promise<T> {
   }
 
   const res = await fetch(url, init)
-  if (!res.ok) {
-    let detail = `요청이 실패했습니다 (${res.status})`
-    try {
-      const body = (await res.json()) as { error?: string }
-      if (body.error) detail = body.error
-    } catch {
-      // Not JSON; the status is all there is.
-    }
-    throw new ApiError(res.status, explain(res.status, detail))
-  }
+  if (!res.ok) throw errorOf(res.status, await res.text().catch(() => ''))
   if (res.status === 204) return undefined as T
   const type = res.headers.get('Content-Type') ?? ''
   return (type.includes('json') ? await res.json() : await res.text()) as T

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, filesUrl } from '../api'
 import type { Entry } from '../types'
-import { compareNames, domainRoot, sortEntriesBy, TRASH_DIR } from '../lib/format'
+import { compareNames, domainRoot, formatSize, sortEntriesBy, TRASH_DIR } from '../lib/format'
+import { planFromEntries, planFromInput, takeEntries, topLevelNames, type UploadPlan } from '../lib/uploadPlan'
+import { runUpload, type UploadProgress } from '../lib/upload'
 import { foldOf, needleOf, scoreFolded, type Match } from '../lib/fuzzy'
 import { useWindowVirtual } from '../lib/useVirtual'
 import { useViewPrefs } from '../lib/useViewPrefs'
@@ -20,11 +22,9 @@ import { Icon } from './Icon'
 // many items sit on a row to map an index to a position.
 const GRID_CARD_MIN = 150
 
-interface UploadState {
-  current: string
-  done: number
-  total: number
-}
+// While a dropped folder is still being read there is no total yet, only the
+// fact that something is happening.
+type UploadState = { reading: true } | ({ reading: false } & UploadProgress)
 
 export function Browser({
   path,
@@ -53,6 +53,7 @@ export function Browser({
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [loadError, setLoadError] = useState('')
   const [upload, setUpload] = useState<UploadState | null>(null)
+  const uploadAbort = useRef<AbortController | null>(null)
   const [dragging, setDragging] = useState(false)
   const [chmodding, setChmodding] = useState<{ path: string; entry: Entry } | null>(null)
   const [previewing, setPreviewing] = useState<{ path: string; entry: Entry } | null>(null)
@@ -182,25 +183,75 @@ export function Browser({
     void reload()
   }, [reload])
 
-  const uploadFiles = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return
+  // Leaving the page cancels whatever is in flight, and the browser asks first
+  // only if something tells it to.
+  useEffect(() => {
+    if (!upload) return
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [upload])
+
+  const startUpload = useCallback(
+    async (getPlan: () => Promise<UploadPlan> | UploadPlan) => {
+      if (uploadAbort.current) {
+        onError('올리는 중입니다. 끝난 뒤에 다시 올려 주세요.')
+        return
+      }
       if (!canWrite) {
         onError('파일은 내 폴더나 팀 폴더 안에만 올릴 수 있습니다.')
         return
       }
-      for (const [i, file] of files.entries()) {
-        setUpload({ current: file.name, done: i, total: files.length })
+      const abort = new AbortController()
+      uploadAbort.current = abort
+      try {
+        setUpload({ reading: true })
+        let plan: UploadPlan
         try {
-          await api.upload(path + '/' + file.name, file)
-        } catch (e) {
-          onError(`${file.name}: ${e instanceof Error ? e.message : '올리지 못했습니다.'}`)
+          plan = await getPlan()
+        } catch {
+          onError('올릴 항목을 읽지 못했습니다.')
+          return
         }
+        if (abort.signal.aborted || (plan.files.length === 0 && plan.dirs.length === 0)) return
+
+        // The server overwrites a file of the same name without asking, and a
+        // folder of the same name is merged into. Both are worth one question
+        // before the first byte rather than a surprise after the last.
+        const existing = new Set((entries ?? []).map((e) => e.name))
+        const taken = [...topLevelNames(plan)].filter((n) => existing.has(n))
+        if (taken.length > 0) {
+          const shown = taken.slice(0, 5).map((n) => `"${n}"`).join(', ')
+          const more = taken.length > 5 ? ` 외 ${taken.length - 5}개` : ''
+          setUpload(null)
+          const ok = await dialogs.confirm({
+            title: '같은 이름이 이미 있습니다',
+            message: `${shown}${more}. 같은 이름의 파일은 덮어쓰고, 폴더는 그 안에 합칩니다.`,
+            confirmLabel: '덮어쓰기',
+            danger: true,
+          })
+          if (!ok) return
+        }
+
+        const failures = await runUpload(path, plan, (p) => setUpload({ reading: false, ...p }), abort.signal)
+        if (abort.signal.aborted) onError('올리기를 취소했습니다. 끝나지 않은 파일은 저장되지 않았습니다.')
+        else if (failures.length === 1) onError(`${failures[0]?.rel}: ${failures[0]?.message}`)
+        else if (failures.length > 1)
+          onError(
+            `${failures.length}개를 올리지 못했습니다 — ` +
+              failures
+                .slice(0, 3)
+                .map((f) => `${f.rel}: ${f.message}`)
+                .join(' / ') +
+              (failures.length > 3 ? ' …' : ''),
+          )
+      } finally {
+        uploadAbort.current = null
+        setUpload(null)
+        await reload()
       }
-      setUpload(null)
-      await reload()
     },
-    [canWrite, onError, path, reload],
+    [canWrite, dialogs, entries, onError, path, reload],
   )
 
   async function remove(entry: Entry) {
@@ -323,7 +374,11 @@ export function Browser({
         if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
         setDragging(false)
-        void uploadFiles([...e.dataTransfer.files])
+        // Taken NOW: the DataTransfer is emptied as soon as this handler returns,
+        // and a folder can only be read through its entries.
+        const dropped = takeEntries(e.dataTransfer)
+        const files = [...e.dataTransfer.files]
+        void startUpload(() => (dropped ? planFromEntries(dropped) : planFromInput(files)))
       }}
     >
       <div className="toolbar">
@@ -335,8 +390,26 @@ export function Browser({
             multiple
             hidden
             onChange={(e) => {
-              void uploadFiles([...(e.target.files ?? [])])
+              const files = [...(e.target.files ?? [])]
               e.target.value = ''
+              void startUpload(() => planFromInput(files))
+            }}
+          />
+        </label>
+        <label className="button ghost">
+          <Icon name="folder" size={17} />
+          폴더 올리기
+          <input
+            type="file"
+            hidden
+            // Not in React's attribute types, and the browser only honours it
+            // as an attribute; the picked folder arrives with its own name on
+            // every file's webkitRelativePath.
+            ref={(el) => el?.setAttribute('webkitdirectory', '')}
+            onChange={(e) => {
+              const files = [...(e.target.files ?? [])]
+              e.target.value = ''
+              void startUpload(() => planFromInput(files))
             }}
           />
         </label>
@@ -380,18 +453,29 @@ export function Browser({
       {upload && (
         <div className="progress">
           {/* The bar needs a track behind it, or a 10%-done upload reads as a
-              stray blue dash rather than as progress through something. */}
+              stray blue dash rather than as progress through something. Bytes,
+              not files: one large video among a hundred notes would otherwise
+              sit at 99% for most of the wait. */}
           <div
             className="track"
             role="progressbar"
-            aria-valuenow={upload.done}
-            aria-valuemax={upload.total}
+            aria-label="올리는 중"
+            aria-valuenow={upload.reading ? undefined : upload.sent}
+            aria-valuemax={upload.reading ? undefined : upload.total}
           >
-            <div className="bar" style={{ width: `${(upload.done / upload.total) * 100}%` }} />
+            <div
+              className={upload.reading ? 'bar indeterminate' : 'bar'}
+              style={upload.reading ? undefined : { width: `${upload.total ? (upload.sent / upload.total) * 100 : 100}%` }}
+            />
           </div>
-          <span className="muted small">
-            {upload.current} ({upload.done + 1}/{upload.total})
+          <span className="muted small progress-label">
+            {upload.reading
+              ? '올릴 항목을 읽는 중…'
+              : `${upload.current} — ${upload.filesDone.toLocaleString('ko-KR')}/${upload.filesTotal.toLocaleString('ko-KR')}개 · ${bytesOf(upload.sent)} / ${bytesOf(upload.total)}`}
           </span>
+          <button type="button" className="ghost" onClick={() => uploadAbort.current?.abort()}>
+            취소
+          </button>
         </div>
       )}
 
@@ -513,6 +597,12 @@ export function Browser({
       )}
     </div>
   )
+}
+
+// formatSize leaves 0 blank, which is right for a listing's size column and
+// wrong for a progress count that has not started yet.
+function bytesOf(n: number): string {
+  return formatSize(n) || '0 B'
 }
 
 /**
