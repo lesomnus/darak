@@ -83,7 +83,7 @@ jobs:
       # binaries the other targets already compiled -- so a cache there would be
       # a round trip for layers that are about to be pushed anyway.
       - name: Test
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         with:
           source: .
           files: docker-bake.hcl
@@ -107,7 +107,7 @@ jobs:
       - name: Push
         id: push
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         with:
           source: .
           files: docker-bake.hcl
