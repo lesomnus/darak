@@ -38,7 +38,7 @@ services:
   # resolve to the same file. The engine listens without TLS, but only on that
   # shared network, which nothing outside the two containers is on.
   docker:
-    image: docker:28-dind
+    image: docker:29-dind
 
     privileged: true
     network_mode: "service:dev"

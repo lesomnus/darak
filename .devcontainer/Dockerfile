@@ -7,5 +7,5 @@ RUN VERSION="1.66"; \
 
 # Only what talks to an engine; the engine itself is the `docker` service of
 # docker-compose.yaml.
-COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
-COPY --from=docker:28-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+COPY --from=docker:29-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker:29-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
