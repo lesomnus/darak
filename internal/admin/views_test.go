@@ -114,3 +114,54 @@ func TestReroutePathLeavesThePathAloneWhenTheRosterIsUnreadable(t *testing.T) {
 		t.Errorf("ReroutePath = %q; want the path unchanged (%q)", got, p)
 	}
 }
+
+// From schema 1 usersync says where each view is (`views`), and darak opens that
+// path instead of building one. The fixture puts simulation's view where the old
+// rule would never put it, so a test passing on the old rule would be a test of
+// nothing.
+const routeRosterV1 = `{"schema":1,"paths":{"home":"/srv/data/homes","groups":"/srv/data/teams"},"groups":[
+	{"name":"perception","gid":10001,"members":["alice"]},
+	{"name":"simulation","gid":10017,"readers":["simulation-readers"],"members":["bob"]},
+	{"name":"simulation-readers","gid":10020,"members":["alice"],
+	 "views":[{"team":"simulation","path":"/srv/data/views/simulation-readers/simulation"}]},
+	{"name":"outside","gid":10030,"readers":["far-ro"],"members":["bob"]},
+	{"name":"far-ro","gid":10031,"members":["alice"],
+	 "views":[{"team":"outside","path":"/elsewhere/far-ro/outside"}]},
+	{"name":"undeclared","gid":10040,"readers":["no-views"],"members":["bob"]},
+	{"name":"no-views","gid":10041,"members":["alice"]}
+],"users":[{"name":"alice","uid":3001},{"name":"bob","uid":3002}]}`
+
+func TestReroutePathFollowsTheDeclaredView(t *testing.T) {
+	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": routeRosterV1}}, fakeResolver{})
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		what, user, in, want string
+	}{
+		{"a reader goes where usersync says the view is",
+			"alice", "teams/simulation/runs/a.zarr", "views/simulation-readers/simulation/runs/a.zarr"},
+		{"a member keeps the writable path",
+			"bob", "teams/simulation/runs/a.zarr", "teams/simulation/runs/a.zarr"},
+		{"a view outside the data root has no route, so the reader is refused",
+			"alice", "teams/outside/x", "teams/outside/x"},
+		{"from schema 1 a missing view is not rebuilt by the old rule",
+			"alice", "teams/undeclared/x", "teams/undeclared/x"},
+	} {
+		if got := a.ReroutePath(ctx, tc.user, tc.in); got != tc.want {
+			t.Errorf("%s: ReroutePath(%q, %q) = %q; want %q", tc.what, tc.user, tc.in, got, tc.want)
+		}
+	}
+}
+
+// A schema newer than this code knows is refused, and refusal leaves every
+// path unrouted: a reader is turned away rather than sent somewhere guessed.
+func TestDeclarationRefusesANewerSchema(t *testing.T) {
+	newer := `{"schema":2,"groups":[],"users":[]}`
+	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": newer}}, fakeResolver{})
+	if _, err := a.Declaration(context.Background()); err == nil {
+		t.Fatal("Declaration accepted a schema newer than it understands")
+	}
+	if got := a.ReroutePath(context.Background(), "alice", "teams/simulation/x"); got != "teams/simulation/x" {
+		t.Errorf("ReroutePath = %q; want the path unchanged", got)
+	}
+}
