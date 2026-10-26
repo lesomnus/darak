@@ -28,8 +28,13 @@
 # It also carries deploy/accounts-cache.sh, which the entrypoint sources so a
 # restart restores the accounts instead of recreating them (copied out below).
 #
+# It also carries `views` in `usersync roster` (usersync#15), which
+# internal/admin/views.go routes readers by, and the stricter view handling of
+# the same change: apply --nss-only here only takes down read-only id-mapped
+# mounts, and only takes empty directories it made itself.
+#
 # Replace this with a tag the moment usersync publishes one.
-ARG USERSYNC_VERSION=11ab820478e3624dd55d858385d5dc14ad769e81
+ARG USERSYNC_VERSION=03f35bcceb161333a415469383955271743e77cb
 
 FROM golang:1.27-trixie AS build
 WORKDIR /src
