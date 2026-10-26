@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -71,8 +72,15 @@ func (a *Admin) cachedDeclaration(ctx context.Context) (*Declaration, error) {
 	return d, nil
 }
 
-// ReaderRoutes maps each team the user reads through a view to the reader group
-// whose folder carries that view.
+// ReaderRoutes maps each team the user reads through a view to the path of that
+// view, relative to the data root — the path the helper opens instead.
+//
+// The view's path comes from the roster (usersync's `views`), not from a rule
+// of ours: where views live is usersync's to decide, and a rule kept here as
+// well can drift from it. A usersync that predates `views` (schema 0) laid them
+// out at teams/<reader>/<team>, so that is built only then. A view usersync
+// places outside the data root has no route: the reader is refused, which is the
+// direction to fail in.
 //
 // A team the user is a MEMBER of is never in the map: they reach their own
 // folder directly, and sending them to the read-only view would take their
@@ -90,6 +98,13 @@ func (a *Admin) ReaderRoutes(ctx context.Context, user string) (map[string]strin
 			mine[g.Name] = true
 		}
 	}
+	type key struct{ reader, team string }
+	declared := map[key]string{}
+	for _, g := range d.Groups {
+		for _, v := range g.Views {
+			declared[key{g.Name, v.Team}] = v.Path
+		}
+	}
 	out := map[string]string{}
 	for _, g := range d.Groups {
 		if mine[g.Name] {
@@ -102,13 +117,31 @@ func (a *Admin) ReaderRoutes(ctx context.Context, user string) (map[string]strin
 		readers := slices.Clone(g.Readers)
 		slices.Sort(readers)
 		for _, r := range readers {
-			if mine[r] {
-				out[g.Name] = r
-				break
+			if !mine[r] {
+				continue
 			}
+			if d.Schema == 0 {
+				out[g.Name] = path.Join(teamsDir, r, g.Name)
+			} else if rel, ok := a.underRoot(declared[key{r, g.Name}]); ok {
+				out[g.Name] = rel
+			}
+			break
 		}
 	}
 	return out, nil
+}
+
+// underRoot turns an absolute path usersync gave into one relative to the data
+// root the helper serves, or reports that it is not inside it.
+func (a *Admin) underRoot(p string) (string, bool) {
+	if p == "" || !filepath.IsAbs(p) {
+		return "", false
+	}
+	rel, err := filepath.Rel(a.cfg.Root, p)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }
 
 // ReroutePath returns the path the helper should actually open for user, given
@@ -134,11 +167,10 @@ func (a *Admin) ReroutePath(ctx context.Context, user, p string) string {
 		// error rather than as data somebody should not have seen.
 		return p
 	}
-	reader, ok := routes[team]
+	out, ok := routes[team]
 	if !ok {
 		return p
 	}
-	out := path.Join(teamsDir, reader, team)
 	if tail != "" {
 		out = path.Join(out, tail)
 	}

@@ -28,10 +28,33 @@ import (
 // ErrNotOwner is returned when the caller does not own the group.
 var ErrNotOwner = errors.New("admin: not an owner of this team")
 
-// Declaration is the roster as written, as `usersync roster` prints it.
+// Declaration is the roster as written, as `usersync roster` prints it. The
+// shape is usersync's documented interface (usersync docs/interface.md).
 type Declaration struct {
+	// Schema is usersync's version of this shape. 0 is a usersync that predates
+	// the field; a number above rosterSchema is refused, because the change that
+	// bumped it is by definition one this reader would misread.
+	Schema int             `json:"schema,omitempty"`
+	Paths  *DeclaredPaths  `json:"paths,omitempty"`
 	Groups []DeclaredGroup `json:"groups"`
 	Users  []DeclaredUser  `json:"users"`
+}
+
+// rosterSchema is the newest `usersync roster` shape this code understands.
+const rosterSchema = 1
+
+// DeclaredPaths are the installation's bases as usersync is configured.
+type DeclaredPaths struct {
+	Home   string `json:"home"`
+	Groups string `json:"groups"`
+}
+
+// DeclaredView is one read-only view a group holds: the team it shows and the
+// absolute path usersync mounts it at. darak opens that path as given — where a
+// view lives is usersync's to decide.
+type DeclaredView struct {
+	Team string `json:"team"`
+	Path string `json:"path"`
 }
 
 type DeclaredGroup struct {
@@ -45,6 +68,10 @@ type DeclaredGroup struct {
 	// write it. Used to compute who may enter a team folder without probing the
 	// filesystem — a reader is not a member but can still open it.
 	Readers []string `json:"readers,omitempty"`
+	// Views is the other side of Readers: the teams this group may read, each
+	// with the path of its view. Empty from a usersync that predates it, in which
+	// case the path is built the way that usersync laid it out.
+	Views []DeclaredView `json:"views,omitempty"`
 	// All is a hint that this is an `all` group (every active user, or a profile
 	// cohort). Its concrete membership is already resolved into Members by
 	// `usersync roster`, so this is informational only — the access and panel logic
@@ -78,6 +105,9 @@ func (a *Admin) Declaration(ctx context.Context) (*Declaration, error) {
 	var d Declaration
 	if err := json.Unmarshal([]byte(out[start:]), &d); err != nil {
 		return nil, fmt.Errorf("admin: parse the roster: %w", err)
+	}
+	if d.Schema > rosterSchema {
+		return nil, fmt.Errorf("admin: usersync roster schema %d is newer than this darak understands (%d)", d.Schema, rosterSchema)
 	}
 	return &d, nil
 }

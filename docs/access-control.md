@@ -123,7 +123,12 @@ reader 그룹마다 팀 폴더를 **읽기 전용 + idmapped** 로 bind 한 뷰�
 `O(파일 수)`라 실제로 서비스를 멈췄습니다([nas-design.md ADR-1 개정](../nas-design.md)).
 
 **웹에서는 보이는 게 달라지지 않습니다.** reader 가 `teams/<팀>` 을 열면 darak 이 그 뷰로
-보내 줍니다. **탐색기(SMB)에서는 자기 그룹 공유로 들어갑니다** — `\\nas\<reader>` 안에
+보내 줍니다. **뷰가 어디 있는지는 usersync 가 알려 줍니다** — `usersync roster` 의 그룹별
+`views`(`{team, path}`)를 그대로 엽니다. darak 은 경로 규칙을 따로 갖지 않으므로, usersync 가
+뷰를 다른 자리로 옮겨도 바꿀 것이 없습니다([usersync docs/interface.md](https://github.com/lesomnus/usersync/blob/main/docs/interface.md),
+[usersync#13](https://github.com/lesomnus/usersync/issues/13)). `views` 가 없는 옛 usersync(schema 0)일
+때만 위 `teams/<reader>/<팀>` 을 직접 만들고, 모르는 schema 면 roster 를 읽지 않습니다 — 그러면
+reader 는 막힙니다. **탐색기(SMB)에서는 자기 그룹 공유로 들어갑니다** — `\\nas\<reader>` 안에
 `<팀>` 폴더가 읽기 전용으로 보입니다.
 
 reader 는 팀 그룹 구성원이 **아니므로** 팀의 원래 경로는 계속 막혀 있습니다. 즉 뷰가 없으면
