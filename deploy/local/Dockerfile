@@ -20,7 +20,7 @@ ARG USERSYNC_VERSION=1f662f4a8588c78282008e85b52b0cba807bc8c5
 RUN CGO_ENABLED=0 go install -trimpath github.com/lesomnus/usersync@${USERSYNC_VERSION}
 
 # The interface, as in deploy/prod.
-FROM node:24-bookworm-slim AS web
+FROM node:26-bookworm-slim AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci

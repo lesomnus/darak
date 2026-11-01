@@ -84,7 +84,7 @@ RUN cp "$(go env GOMODCACHE)"/github.com/lesomnus/usersync@*/deploy/accounts-cac
 #
 # Debian rather than Alpine for the reason deploy/dev gives: esbuild and rollup
 # ship separate glibc and musl binaries, and the lockfile is resolved on glibc.
-FROM node:24-bookworm-slim AS web
+FROM node:26-bookworm-slim AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
