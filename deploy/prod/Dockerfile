@@ -34,7 +34,9 @@
 # mounts, and only takes empty directories it made itself.
 #
 # Replace this with a tag the moment usersync publishes one.
-ARG USERSYNC_VERSION=03f35bcceb161333a415469383955271743e77cb
+# Includes the compatible log SDK, slog bridge and pretty exporter update
+# from usersync#21; keep the web and SMB tiers on the same usersync source.
+ARG USERSYNC_VERSION=9219c8daa8049ed578d3d5315a1fa1ecb915a192
 
 FROM golang:1.27-trixie AS build
 WORKDIR /src
