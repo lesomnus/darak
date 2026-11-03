@@ -33,10 +33,14 @@
 # the same change: apply --nss-only here only takes down read-only id-mapped
 # mounts, and only takes empty directories it made itself.
 #
+# It also carries paths.views (usersync#22): with it set, apply --nss-only mounts
+# this pod's views at <views>/<reader>/<team> as well, and roster's views point
+# there — which is where internal/admin/views.go then routes readers.
+#
 # Replace this with a tag the moment usersync publishes one.
 # Includes the compatible log SDK, slog bridge and pretty exporter update
 # from usersync#21; keep the web and SMB tiers on the same usersync source.
-ARG USERSYNC_VERSION=9219c8daa8049ed578d3d5315a1fa1ecb915a192
+ARG USERSYNC_VERSION=708a811a79b2dacaf0c7565fc8449817693b992a
 
 FROM golang:1.27-trixie AS build
 WORKDIR /src
