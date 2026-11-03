@@ -12,15 +12,19 @@ import (
 //	simulation-readers  alice is a member  -> alice reads simulation through it
 //	notice              read by `everyone`, which both are in
 //	both-ro / alt-ro    two of alice's groups read `shared`; the choice must be stable
-const routeRoster = `{"groups":[
+const routeRoster = `{"schema":2,"paths":{"home":"/srv/data/homes","groups":"/srv/data/teams","views":"/srv/data/views"},"groups":[
 	{"name":"perception","gid":10001,"members":["alice"]},
 	{"name":"simulation","gid":10017,"readers":["simulation-readers"],"members":["bob"]},
-	{"name":"simulation-readers","gid":10020,"members":["alice"]},
-	{"name":"everyone","gid":10050,"all":true,"members":["alice","bob"]},
+	{"name":"simulation-readers","gid":10020,"members":["alice"],
+	 "views":[{"team":"simulation","path":"/srv/data/views/simulation-readers/simulation"}]},
+	{"name":"everyone","gid":10050,"all":true,"members":["alice","bob"],
+	 "views":[{"team":"notice","path":"/srv/data/views/everyone/notice"}]},
 	{"name":"notice","gid":10051,"readers":["everyone"]},
 	{"name":"shared","gid":10060,"readers":["both-ro","alt-ro"],"members":["bob"]},
-	{"name":"alt-ro","gid":10061,"members":["alice"]},
-	{"name":"both-ro","gid":10062,"members":["alice"]}
+	{"name":"alt-ro","gid":10061,"members":["alice"],
+	 "views":[{"team":"shared","path":"/srv/data/views/alt-ro/shared"}]},
+	{"name":"both-ro","gid":10062,"members":["alice"],
+	 "views":[{"team":"shared","path":"/srv/data/views/both-ro/shared"}]}
 ],"users":[{"name":"alice","uid":3001},{"name":"bob","uid":3002}]}`
 
 func routeAdmin(t *testing.T) *Admin {
@@ -28,8 +32,8 @@ func routeAdmin(t *testing.T) *Admin {
 	return newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": routeRoster}}, fakeResolver{})
 }
 
-// A reader's request at a team folder goes to the read-only view in their own
-// group's folder; everything else is left exactly as it was asked for.
+// A reader's request at a team folder goes to the read-only view usersync
+// declared; everything else is left exactly as it was asked for.
 func TestReroutePath(t *testing.T) {
 	a := routeAdmin(t)
 	ctx := context.Background()
@@ -38,9 +42,9 @@ func TestReroutePath(t *testing.T) {
 		what, user, in, want string
 	}{
 		{"a reader is sent to the view",
-			"alice", "teams/simulation", "teams/simulation-readers/simulation"},
+			"alice", "teams/simulation", "views/simulation-readers/simulation"},
 		{"and so is everything under it",
-			"alice", "teams/simulation/runs/2026/a.zarr", "teams/simulation-readers/simulation/runs/2026/a.zarr"},
+			"alice", "teams/simulation/runs/2026/a.zarr", "views/simulation-readers/simulation/runs/2026/a.zarr"},
 		{"a member keeps the writable path",
 			"bob", "teams/simulation", "teams/simulation"},
 		{"a member of the team is never routed, even to a team they also read",
@@ -48,13 +52,13 @@ func TestReroutePath(t *testing.T) {
 		{"somebody with no claim is left to be refused",
 			"bob", "teams/perception", "teams/perception"},
 		{"an `all` reader group routes like any other",
-			"bob", "teams/notice/memo.pdf", "teams/everyone/notice/memo.pdf"},
+			"bob", "teams/notice/memo.pdf", "views/everyone/notice/memo.pdf"},
 		{"the teams root is not a team",
 			"alice", "teams", "teams"},
 		{"a home is not a team",
 			"alice", "homes/alice/x", "homes/alice/x"},
 		{"the view's own path is already where it should go",
-			"alice", "teams/simulation-readers/simulation", "teams/simulation-readers/simulation"},
+			"alice", "views/simulation-readers/simulation", "views/simulation-readers/simulation"},
 	} {
 		if got := a.ReroutePath(ctx, tc.user, tc.in); got != tc.want {
 			t.Errorf("%s: ReroutePath(%q, %q) = %q; want %q", tc.what, tc.user, tc.in, got, tc.want)
@@ -70,7 +74,7 @@ func TestReroutePathIsStableWithSeveralReaderGroups(t *testing.T) {
 	ctx := context.Background()
 
 	first := a.ReroutePath(ctx, "alice", "teams/shared/f.txt")
-	if want := "teams/alt-ro/shared/f.txt"; first != want {
+	if want := "views/alt-ro/shared/f.txt"; first != want {
 		t.Fatalf("ReroutePath = %q; want %q (the sorted first of alice's reader groups)", first, want)
 	}
 	for range 5 {
@@ -115,11 +119,9 @@ func TestReroutePathLeavesThePathAloneWhenTheRosterIsUnreadable(t *testing.T) {
 	}
 }
 
-// From schema 1 usersync says where each view is (`views`), and darak opens that
-// path instead of building one. The fixture puts simulation's view where the old
-// rule would never put it, so a test passing on the old rule would be a test of
-// nothing.
-const routeRosterV1 = `{"schema":1,"paths":{"home":"/srv/data/homes","groups":"/srv/data/teams"},"groups":[
+// usersync says where each view is (`views`), and darak opens that path instead
+// of building one: a view outside the data root, or none declared, is no route.
+const routeRosterViews = `{"schema":2,"paths":{"home":"/srv/data/homes","groups":"/srv/data/teams","views":"/srv/data/views"},"groups":[
 	{"name":"perception","gid":10001,"members":["alice"]},
 	{"name":"simulation","gid":10017,"readers":["simulation-readers"],"members":["bob"]},
 	{"name":"simulation-readers","gid":10020,"members":["alice"],
@@ -132,7 +134,7 @@ const routeRosterV1 = `{"schema":1,"paths":{"home":"/srv/data/homes","groups":"/
 ],"users":[{"name":"alice","uid":3001},{"name":"bob","uid":3002}]}`
 
 func TestReroutePathFollowsTheDeclaredView(t *testing.T) {
-	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": routeRosterV1}}, fakeResolver{})
+	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": routeRosterViews}}, fakeResolver{})
 	ctx := context.Background()
 
 	for _, tc := range []struct {
@@ -144,7 +146,7 @@ func TestReroutePathFollowsTheDeclaredView(t *testing.T) {
 			"bob", "teams/simulation/runs/a.zarr", "teams/simulation/runs/a.zarr"},
 		{"a view outside the data root has no route, so the reader is refused",
 			"alice", "teams/outside/x", "teams/outside/x"},
-		{"from schema 1 a missing view is not rebuilt by the old rule",
+		{"a reader with no declared view is not routed by a rule of ours",
 			"alice", "teams/undeclared/x", "teams/undeclared/x"},
 	} {
 		if got := a.ReroutePath(ctx, tc.user, tc.in); got != tc.want {
@@ -153,15 +155,26 @@ func TestReroutePathFollowsTheDeclaredView(t *testing.T) {
 	}
 }
 
-// A schema newer than this code knows is refused, and refusal leaves every
-// path unrouted: a reader is turned away rather than sent somewhere guessed.
-func TestDeclarationRefusesANewerSchema(t *testing.T) {
-	newer := `{"schema":2,"groups":[],"users":[]}`
-	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": newer}}, fakeResolver{})
-	if _, err := a.Declaration(context.Background()); err == nil {
-		t.Fatal("Declaration accepted a schema newer than it understands")
+// A schema this code does not know is refused — newer, or older than `views` —
+// and refusal leaves every path unrouted: a reader is turned away rather than
+// sent somewhere guessed.
+func TestDeclarationRefusesAnUnknownSchema(t *testing.T) {
+	for _, roster := range []string{
+		`{"schema":3,"groups":[],"users":[]}`,
+		`{"groups":[],"users":[]}`, // schema 0: predates views
+	} {
+		a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": roster}}, fakeResolver{})
+		if _, err := a.Declaration(context.Background()); err == nil {
+			t.Errorf("Declaration accepted %s", roster)
+		}
+		if got := a.ReroutePath(context.Background(), "alice", "teams/simulation/x"); got != "teams/simulation/x" {
+			t.Errorf("ReroutePath = %q; want the path unchanged", got)
+		}
 	}
-	if got := a.ReroutePath(context.Background(), "alice", "teams/simulation/x"); got != "teams/simulation/x" {
-		t.Errorf("ReroutePath = %q; want the path unchanged", got)
+	// schema 1 has the same shape as 2.
+	one := `{"schema":1,"groups":[],"users":[]}`
+	a := newTestAdmin(t, &fakeRunner{out: map[string]string{"usersync roster": one}}, fakeResolver{})
+	if _, err := a.Declaration(context.Background()); err != nil {
+		t.Errorf("schema 1 refused: %v", err)
 	}
 }

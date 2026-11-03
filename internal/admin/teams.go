@@ -31,17 +31,23 @@ var ErrNotOwner = errors.New("admin: not an owner of this team")
 // Declaration is the roster as written, as `usersync roster` prints it. The
 // shape is usersync's documented interface (usersync docs/interface.md).
 type Declaration struct {
-	// Schema is usersync's version of this shape. 0 is a usersync that predates
-	// the field; a number above rosterSchema is refused, because the change that
-	// bumped it is by definition one this reader would misread.
+	// Schema is usersync's version of this shape. One outside
+	// [minRosterSchema, rosterSchema] is refused: a newer one changed something
+	// by definition this reader would misread, and an older one predates
+	// `views`, without which a reader cannot be routed.
 	Schema int             `json:"schema,omitempty"`
 	Paths  *DeclaredPaths  `json:"paths,omitempty"`
 	Groups []DeclaredGroup `json:"groups"`
 	Users  []DeclaredUser  `json:"users"`
 }
 
-// rosterSchema is the newest `usersync roster` shape this code understands.
-const rosterSchema = 1
+// rosterSchema is the newest `usersync roster` shape this code understands, and
+// minRosterSchema the oldest. 1 added `views`; 2 moved every view into the view
+// namespace without changing the shape (usersync docs/interface.md).
+const (
+	rosterSchema    = 2
+	minRosterSchema = 1
+)
 
 // DeclaredPaths are the installation's bases as usersync is configured.
 type DeclaredPaths struct {
@@ -69,8 +75,7 @@ type DeclaredGroup struct {
 	// filesystem — a reader is not a member but can still open it.
 	Readers []string `json:"readers,omitempty"`
 	// Views is the other side of Readers: the teams this group may read, each
-	// with the path of its view. Empty from a usersync that predates it, in which
-	// case the path is built the way that usersync laid it out.
+	// with the path of its view, as usersync mounts it.
 	Views []DeclaredView `json:"views,omitempty"`
 	// All is a hint that this is an `all` group (every active user, or a profile
 	// cohort). Its concrete membership is already resolved into Members by
@@ -108,6 +113,9 @@ func (a *Admin) Declaration(ctx context.Context) (*Declaration, error) {
 	}
 	if d.Schema > rosterSchema {
 		return nil, fmt.Errorf("admin: usersync roster schema %d is newer than this darak understands (%d)", d.Schema, rosterSchema)
+	}
+	if d.Schema < minRosterSchema {
+		return nil, fmt.Errorf("admin: usersync roster schema %d is older than this darak understands (%d–%d); it has no views to route readers by", d.Schema, minRosterSchema, rosterSchema)
 	}
 	return &d, nil
 }

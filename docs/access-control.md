@@ -109,12 +109,12 @@
 
 ### `readers`는 파일이 아니라 마운트로 걸립니다
 
-reader 그룹마다 팀 폴더를 **읽기 전용 + idmapped** 로 bind 한 뷰가 그 그룹 자기 폴더 안에
-만들어집니다:
+reader 그룹마다 팀 폴더를 **읽기 전용 + idmapped** 로 bind 한 뷰가 usersync 의 뷰 공간
+(`paths.views`)에 만들어집니다:
 
 ```
 디스크   teams/<팀>             root:<팀>  2770 / 0660   ← 그대로
-뷰       teams/<reader>/<팀>    ro, <팀> 의 gid 가 <reader> 의 gid 로 보인다
+뷰       views/<reader>/<팀>    ro, <팀> 의 gid 가 <reader> 의 gid 로 보인다
 ```
 
 그래서 reader 는 **평범한 group 비트로** 읽고(뷰 안에서 파일이 자기 그룹 소유로 보입니다),
@@ -126,10 +126,9 @@ reader 그룹마다 팀 폴더를 **읽기 전용 + idmapped** 로 bind 한 뷰�
 보내 줍니다. **뷰가 어디 있는지는 usersync 가 알려 줍니다** — `usersync roster` 의 그룹별
 `views`(`{team, path}`)를 그대로 엽니다. darak 은 경로 규칙을 따로 갖지 않으므로, usersync 가
 뷰를 다른 자리로 옮겨도 바꿀 것이 없습니다([usersync docs/interface.md](https://github.com/lesomnus/usersync/blob/main/docs/interface.md),
-[usersync#13](https://github.com/lesomnus/usersync/issues/13)). `views` 가 없는 옛 usersync(schema 0)일
-때만 위 `teams/<reader>/<팀>` 을 직접 만들고, 모르는 schema 면 roster 를 읽지 않습니다 — 그러면
-reader 는 막힙니다. **탐색기(SMB)에서는 자기 그룹 공유로 들어갑니다** — `\\nas\<reader>` 안에
-`<팀>` 폴더가 읽기 전용으로 보입니다.
+[usersync#13](https://github.com/lesomnus/usersync/issues/13)). 모르는 schema(`views` 가 없는 옛 schema 0,
+또는 3 이상)면 roster 를 읽지 않습니다 — 그러면 reader 는 막힙니다. **탐색기(SMB)에서는 reader 그룹의
+읽기 전용 공유로 들어갑니다** — `\\nas\<reader>.read` 안에 `<팀>` 폴더가 읽기 전용으로 보입니다.
 
 reader 는 팀 그룹 구성원이 **아니므로** 팀의 원래 경로는 계속 막혀 있습니다. 즉 뷰가 없으면
 접근이 넓어지는 게 아니라 **막힙니다**. 자세한 것은

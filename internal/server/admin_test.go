@@ -57,7 +57,7 @@ func adminHarnessWith(t *testing.T, a auth.Authenticator) (*harness, *scriptRunn
 			"usersync export --format csv": "type,name,uid_number,gid_number,unix_home_directory,login_shell\nuser,alice,3001,3001,/homes/alice,/usr/sbin/nologin\nuser,bob,3002,3002,/homes/bob,/usr/sbin/nologin\n",
 			"pdbedit -L -v":                "Unix username:\talice\nAccount Flags:\t[U]\n\nUnix username:\tbob\nAccount Flags:\t[U]\n",
 			"usersync audit --json":        `{"findings":[]}`,
-			"usersync roster": `{"groups":[{"name":"team-a","gid":10001,"owners":["bob"],"members":["bob"]},` +
+			"usersync roster": `{"schema":2,"groups":[{"name":"team-a","gid":10001,"owners":["bob"],"members":["bob"]},` +
 				`{"name":"team-b","gid":10002,"owners":[]}],` +
 				`"users":[{"name":"alice","uid":3001,"status":"active"},` +
 				`{"name":"bob","uid":3002,"status":"active"},` +
