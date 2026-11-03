@@ -40,7 +40,10 @@
 # Replace this with a tag the moment usersync publishes one.
 # Includes the compatible log SDK, slog bridge and pretty exporter update
 # from usersync#21; keep the web and SMB tiers on the same usersync source.
-ARG USERSYNC_VERSION=708a811a79b2dacaf0c7565fc8449817693b992a
+# dc12db8 adds read_all (usersync#25; roster's readers/views come resolved, so
+# routing needs no change here), reloads usersync.yaml in `watch` and sweeps
+# leftover view mountpoints (usersync#24).
+ARG USERSYNC_VERSION=dc12db80ee505c6ff88c2e6759b5509094a28a69
 
 FROM golang:1.27-trixie AS build
 WORKDIR /src
