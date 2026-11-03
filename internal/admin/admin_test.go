@@ -70,7 +70,7 @@ func TestSetTeamMembershipThroughController(t *testing.T) {
 // enterable when it is world-open (anonymous), when the user is in the group, or
 // when the user is in one of its reader groups.
 func TestTeamAccess(t *testing.T) {
-	const roster = `{"groups":[
+	const roster = `{"schema":2,"groups":[
 		{"name":"perception","gid":10001,"members":["alice"]},
 		{"name":"public","gid":19999,"anonymous":"read"},
 		{"name":"simulation","gid":10017,"readers":["simulation-readers"],"members":["bob"]},
@@ -529,6 +529,7 @@ func contains(ss []string, want string) bool {
 }
 
 const declJSON = `{
+  "schema": 2,
   "groups": [
     {"name":"team-a","gid":10001,"owners":["alice"],"members":["alice"]},
     {"name":"team-b","gid":10002,"owners":[],"members":["carol"]}
@@ -555,7 +556,7 @@ func teamFixture() (*fakeRunner, fakeResolver) {
 // write, sorted, with the write flag set only for the writable ones.
 func TestPublicFolders(t *testing.T) {
 	r := &fakeRunner{out: map[string]string{
-		"usersync roster": `{"groups":[
+		"usersync roster": `{"schema":2,"groups":[
 			{"name":"secret","gid":10001,"owners":[],"readers":[],"anonymous":"none"},
 			{"name":"dropbox","gid":10004,"owners":[],"readers":[],"anonymous":"write"},
 			{"name":"handbook","gid":10003,"owners":[],"readers":[],"anonymous":"read"},

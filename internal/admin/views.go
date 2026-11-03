@@ -13,13 +13,14 @@ import (
 // Where a reader actually reads.
 //
 // A reader group is granted by usersync as a read-only, id-mapped mount of the
-// team's folder placed inside the READER group's own folder — not by anything
-// written on the files (usersync roster.Group.Readers). So on disk there are two
-// paths to the same data:
+// team's folder in usersync's view namespace — not by anything written on the
+// files (usersync roster.Group.Readers). So on disk there are two paths to the
+// same data:
 //
 //	teams/<team>              the team's own folder. A reader is not in the team
 //	                          group, so this one refuses them.
-//	teams/<reader>/<team>     the view. Read-only, and it looks like theirs.
+//	views/<reader>/<team>     the view (where `usersync roster` says it is).
+//	                          Read-only, and it looks like theirs.
 //
 // The web's answer to a reader asking for teams/<team> must be the second path.
 // Everything else about the request stays as it was: the path a share link
@@ -77,9 +78,8 @@ func (a *Admin) cachedDeclaration(ctx context.Context) (*Declaration, error) {
 //
 // The view's path comes from the roster (usersync's `views`), not from a rule
 // of ours: where views live is usersync's to decide, and a rule kept here as
-// well can drift from it. A usersync that predates `views` (schema 0) laid them
-// out at teams/<reader>/<team>, so that is built only then. A view usersync
-// places outside the data root has no route: the reader is refused, which is the
+// well can drift from it. A reader with no declared view, or one usersync places
+// outside the data root, has no route: the reader is refused, which is the
 // direction to fail in.
 //
 // A team the user is a MEMBER of is never in the map: they reach their own
@@ -120,9 +120,7 @@ func (a *Admin) ReaderRoutes(ctx context.Context, user string) (map[string]strin
 			if !mine[r] {
 				continue
 			}
-			if d.Schema == 0 {
-				out[g.Name] = path.Join(teamsDir, r, g.Name)
-			} else if rel, ok := a.underRoot(declared[key{r, g.Name}]); ok {
+			if rel, ok := a.underRoot(declared[key{r, g.Name}]); ok {
 				out[g.Name] = rel
 			}
 			break
@@ -151,10 +149,9 @@ func (a *Admin) ReroutePath(ctx context.Context, user, p string) string {
 	if a == nil || p == "" {
 		return p
 	}
-	// teams/<team>[/...]. The root itself, a home, and a path already inside a
-	// reader's own folder are all left alone — the last of these is what makes
-	// this idempotent, since the view's own path starts teams/<reader>/ and the
-	// user is a member of <reader>.
+	// teams/<team>[/...]. The root itself, a home, and a view's own path
+	// (views/...) are all left alone — the last of these is what makes this
+	// idempotent.
 	rest, ok := strings.CutPrefix(path.Clean(p), teamsDir+"/")
 	if !ok || rest == "" {
 		return p

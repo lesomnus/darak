@@ -43,7 +43,10 @@
 # dc12db8 adds read_all (usersync#25; roster's readers/views come resolved, so
 # routing needs no change here), reloads usersync.yaml in `watch` and sweeps
 # leftover view mountpoints (usersync#24).
-ARG USERSYNC_VERSION=dc12db80ee505c6ff88c2e6759b5509094a28a69
+# 49bc8de drops the legacy view location and moves `roster` to schema 2
+# (usersync#27), which internal/admin accepts; it also carries the otel warning
+# fix (#26).
+ARG USERSYNC_VERSION=49bc8de3addd6a2e004345a28489b404522d4aed
 
 FROM golang:1.27-trixie AS build
 WORKDIR /src
